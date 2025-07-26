@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>高级音频波形可视化</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <h1>高级音频波形可视化</h1>
+    
+    <div class="controls">
+        <label for="audioFile">请选择一个音频文件:</label>
+        <input type="file" id="audioFile" accept="audio/*">
+    </div>
+
+    <div id="waveform"></div>
+
+    <div id="wave-timeline"></div>
+    
+    <div class="playback-controls">
+        <button id="playBtn">播放 / 暂停</button>
+    </div>
+
+    <script src="https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.min.js"></script>
+    <script src="https://unpkg.com/wavesurfer.js@7/dist/plugins/timeline.min.js"></script>
+    
+    <script src="script.js"></script>
+</body>
+</html>
