@@ -1,13 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-代码效果：指定一个游戏的视频或音频文件，和一句日语，从视频中截取出这句话对应的语音。
-主要核心工具：
-- pykakasi: 将日语文本转换为全平假名
-- Demucs: 分离人声和 BGM
-- Whisper: 日语语音识别，转换出文字
-- fuzz: 字符串模糊匹配模块（解决日语的「表記揺れ」问题）
-"""
-# -*- coding: utf-8 -*-
 
 import os
 import re
@@ -18,7 +9,6 @@ import shutil
 from typing import List, Dict, Optional, Any
 
 # --- 核心依赖 ---
-# 请确保已安装所有必要的库。在终端中运行以下命令：
 # pip install faster-whisper pydub "thefuzz[speedup]" pykakasi mojimoji demucs
 
 from faster_whisper import WhisperModel
@@ -201,13 +191,39 @@ def find_best_match_in_words(
     }
 
 # ==============================================================================
-# 4. 主流程编排模块
+# 4. (新增) 最终裁剪函数
 # ==============================================================================
 
-def find_and_clip_sentence(
+def finalize_clip(source_path: str, start_time: float, end_time: float, output_path: str) -> bool:
+    """
+    根据给定的时间戳，从源音频文件中裁剪出片段并保存。
+
+    :param source_path: 用于裁剪的源音频文件路径 (可以是原始文件或纯人声文件)。
+    :param start_time: 裁剪的开始时间 (秒)。
+    :param end_time: 裁剪的结束时间 (秒)。
+    :param output_path: 裁剪后音频的保存路径。
+    :return: 裁剪是否成功。
+    """
+    print(f"\n--- 音频裁剪模块 ---")
+    print(f"正在从 '{os.path.basename(source_path)}' 中裁剪...")
+    print(f"时间范围: {start_time:.3f}s -> {end_time:.3f}s")
+    try:
+        audio = AudioSegment.from_file(source_path)
+        clipped_audio = audio[int(start_time * 1000):int(end_time * 1000)]
+        clipped_audio.export(output_path, format="wav")
+        print(f"成功裁剪并保存文件到: {output_path}")
+        return True
+    except Exception as e:
+        print(f"裁剪或保存音频时发生错误: {e}")
+        return False
+
+# ==============================================================================
+# 5. 主流程编排模块
+# ==============================================================================
+
+def find_sentence_timestamps(
     audio_path: str,
     target_sentence: str,
-    output_path: str,
     model_path_or_size: str,
     device: str,
     compute_type: str,
@@ -217,29 +233,30 @@ def find_and_clip_sentence(
     demucs_models_path: Optional[str],
     export_transcription_path: Optional[str],
     clip_vocals_only: bool
-) -> bool:
+) -> Optional[Dict[str, Any]]:
     """
-    总流程函数，编排音源分离、语音识别、文本匹配和音频裁剪的完整过程。
+    执行完整的查找流程，但不进行裁剪，而是返回包含所有结果的字典。
 
-    (参数注解同上)
-    :return: 任务是否成功完成。
+    :return: 包含查找结果的字典，如果失败则返回 None。
     """
     if not os.path.exists(audio_path):
         print(f"错误：音频文件未找到 -> {audio_path}")
-        return False
+        return None
 
     audio_for_transcription = audio_path
+    vocals_path_if_separated = None
     if enable_source_separation:
         vocals_path = separate_vocals(audio_path, models_path=demucs_models_path)
         if vocals_path:
             audio_for_transcription = vocals_path
+            vocals_path_if_separated = vocals_path
         else:
             print("警告: 音源分离失败，将继续使用原始音频进行识别。")
     
     all_words = transcribe_audio(audio_for_transcription, model_path_or_size, device, compute_type)
     if not all_words:
         print("任务终止：语音识别步骤未能返回有效的词语列表。")
-        return False
+        return None
 
     if export_transcription_path:
         print(f"正在导出完整转写稿到: {export_transcription_path}")
@@ -254,65 +271,51 @@ def find_and_clip_sentence(
     match_result = find_best_match_in_words(all_words, target_sentence, search_mode, confidence_threshold)
     if not match_result:
         print("任务终止：文本匹配步骤未能找到匹配项。")
-        return False
+        return None
 
-    print("\n--- 匹配成功! ---")
-    print(f"  精确时间范围: 从 {match_result['start_timestamp']:.3f} 秒 到 {match_result['end_timestamp']:.3f} 秒")
-
-    print(f"\n--- 音频裁剪模块 ---")
+    # 决定最终用于裁剪的源文件
     final_clip_source_path = audio_path
-    if clip_vocals_only and enable_source_separation and audio_for_transcription != audio_path:
-        final_clip_source_path = audio_for_transcription
-        print(f"裁剪目标: 仅人声 (来自: {os.path.basename(final_clip_source_path)})")
-    else:
-        print(f"裁剪目标: 原始音频 (来自: {os.path.basename(final_clip_source_path)})")
-
-    try:
-        audio = AudioSegment.from_file(final_clip_source_path)
-        clipped_audio = audio[int(match_result['start_timestamp'] * 1000):int(match_result['end_timestamp'] * 1000)]
-        clipped_audio.export(output_path, format="wav")
-        print("--- 任务完成 ---")
-        return True
-    except Exception as e:
-        print(f"裁剪或保存音频时发生错误: {e}")
-        return False
+    if clip_vocals_only and vocals_path_if_separated:
+        final_clip_source_path = vocals_path_if_separated
+        
+    # 将所有需要的信息打包返回
+    return {
+        "start_time": match_result['start_timestamp'],
+        "end_time": match_result['end_timestamp'],
+        "clip_source_path": final_clip_source_path
+    }
 
 # ==============================================================================
-# 5. 主程序入口
+# 6. 主程序入口
 # ==============================================================================
 
 if __name__ == "__main__":
-    # --- 请在这里配置你的任务 ---
+    # --- 配置任务 (直接运行时使用) ---
     
     INPUT_AUDIO_PATH = r"D:\program\Python\auto-workflows\stt\stt-test\pjsk-test.mp4"
     TARGET_SENTENCE = "今日は、放課後みんなで練習する日だから、 スコア忘れないようにしないと"
     OUTPUT_AUDIO_PATH = "clipped_sentence.wav"
 
-    # --- 音源分离设置 ---
     ENABLE_SOURCE_SEPARATION = True
     DEMUCS_MODELS_PATH = None
-
-    # --- 裁剪设置 ---
     CLIP_VOCALS_ONLY = False
-
-    # --- 调试设置 ---
     EXPORT_TRANSCRIPTION_FILE = True
     TRANSCRIPTION_OUTPUT_PATH = "full_transcription.txt"
 
-    # --- 高级设置 ---
     MODEL_PATH_OR_SIZE = "D:/ACGN/gal/whisper/models/faster-whisper-medium"
     DEVICE = "cuda"
     COMPUTE_TYPE = "float16"
     SEARCH_MODE = 'exhaustive'
     CONFIDENCE_THRESHOLD = 80
 
+    print("--- 开始执行直接裁剪任务 (非校对模式) ---")
     if not os.path.exists(INPUT_AUDIO_PATH):
         print(f"错误: 输入文件 '{INPUT_AUDIO_PATH}' 不存在。请检查路径。")
     else:
-        find_and_clip_sentence(
+        # 1. 调用主流程函数获取 AI 预测的时间戳和裁剪源
+        result = find_sentence_timestamps(
             audio_path=INPUT_AUDIO_PATH,
             target_sentence=TARGET_SENTENCE,
-            output_path=OUTPUT_AUDIO_PATH,
             model_path_or_size=MODEL_PATH_OR_SIZE,
             device=DEVICE,
             compute_type=COMPUTE_TYPE,
@@ -323,3 +326,15 @@ if __name__ == "__main__":
             export_transcription_path=TRANSCRIPTION_OUTPUT_PATH if EXPORT_TRANSCRIPTION_FILE else None,
             clip_vocals_only=CLIP_VOCALS_ONLY
         )
+        
+        # 2. 如果成功找到，立即执行裁剪
+        if result:
+            print("\n--- AI 预测成功，立即执行裁剪 ---")
+            finalize_clip(
+                source_path=result["clip_source_path"],
+                start_time=result["start_time"],
+                end_time=result["end_time"],
+                output_path=OUTPUT_AUDIO_PATH
+            )
+        else:
+            print("\n--- 任务结束，未能找到匹配项或发生错误，未执行裁剪。 ---")

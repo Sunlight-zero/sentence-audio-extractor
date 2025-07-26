@@ -1,0 +1,148 @@
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    background-color: #f0f2f5;
+    color: #333;
+    display: flex;
+    justify-content: center;
+    padding: 2rem;
+    line-height: 1.6;
+}
+
+.container {
+    width: 90%;
+    max-width: 960px;
+    background: #fff;
+    padding: 2rem;
+    border-radius: 8px;
+    box-shadow: 0 4px R12px rgba(0, 0, 0, 0.1);
+}
+
+h1 {
+    text-align: center;
+    color: #1a202c;
+    margin-bottom: 2rem;
+}
+
+.task-form {
+    background-color: #f7fafc;
+    border: 1px solid #e2e8f0;
+    padding: 1.5rem;
+    border-radius: 6px;
+    margin-bottom: 1.5rem;
+}
+
+.form-group {
+    margin-bottom: 1rem;
+}
+
+.form-group label {
+    display: block;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+}
+
+.form-group input[type="text"] {
+    width: 100%;
+    padding: 0.75rem;
+    border: 1px solid #cbd5e0;
+    border-radius: 4px;
+    box-sizing: border-box;
+}
+
+#startTaskBtn {
+    display: block;
+    width: 100%;
+    padding: 0.75rem;
+    font-size: 1rem;
+    font-weight: 600;
+    color: #fff;
+    background-color: #4299e1;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+#startTaskBtn:hover {
+    background-color: #3182ce;
+}
+
+#startTaskBtn:disabled {
+    background-color: #a0aec0;
+    cursor: not-allowed;
+}
+
+.status-info {
+    padding: 1rem;
+    border-radius: 6px;
+    background-color: #e2e8f0;
+    text-align: center;
+    font-weight: 500;
+    margin-bottom: 1.5rem;
+    transition: background-color 0.3s;
+}
+
+.hidden {
+    display: none;
+}
+
+#videoPlayer {
+    background-color: #000;
+    margin-bottom: 1rem;
+    border-radius: 4px;
+}
+
+#waveform {
+    width: 100%;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background-color: #fdfdfd;
+}
+
+.controls {
+    margin-top: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.timestamps {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    flex-wrap: wrap;
+}
+
+.timestamps input {
+    font-size: 1em;
+    padding: 5px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    width: 100px;
+}
+
+.buttons button {
+    padding: 10px 15px;
+    font-size: 1em;
+    cursor: pointer;
+    border: none;
+    border-radius: 5px;
+    color: white;
+    font-weight: 600;
+    transition: background-color 0.2s;
+    margin-right: 10px;
+}
+
+#play-selection-btn {
+    background-color: #48bb78;
+}
+#play-selection-btn:hover {
+    background-color: #38a169;
+}
+
+#save-btn {
+    background-color: #f6ad55;
+}
+#save-btn:hover {
+    background-color: #ed8936;
+}
