@@ -12,7 +12,6 @@
 
         <div class="task-form">
             <div class="form-group">
-                <!-- 关键修改: 从文本输入框改为文件上传控件 -->
                 <label for="videoFile">上传视频/音频文件:</label>
                 <input type="file" id="videoFile" accept="video/*,audio/*">
             </div>
@@ -28,6 +27,7 @@
         <div id="corrector-ui" class="hidden">
             <video id="videoPlayer" width="100%" controls></video>
             <div id="waveform"></div>
+            <div id="timeline"></div>
             
             <div class="controls">
                 <div class="timestamps">

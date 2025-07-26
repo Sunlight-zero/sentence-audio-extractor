@@ -139,6 +139,13 @@ def save_correction():
         return jsonify({"error": f"裁剪音频时出错: {e}"}), 500
 
 if __name__ == '__main__':
+    # 引入 waitress
+    from waitress import serve
+    
+    # 检查是否是主进程，避免在重载时重复打开浏览器
     if not os.environ.get("WERKZEUG_RUN_MAIN"):
         webbrowser.open_new("http://127.0.0.1:5000")
-    app.run(debug=True, port=5000)
+    
+    # 使用 waitress.serve 启动应用，它比 'flask run' 稳定得多
+    print("--- 启动 Waitress 生产服务器 ---")
+    serve(app, host="127.0.0.1", port=5000)

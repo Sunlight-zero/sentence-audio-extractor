@@ -14,7 +14,7 @@ body {
     background: #fff;
     padding: 2rem;
     border-radius: 8px;
-    box-shadow: 0 4px R12px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
 h1 {
@@ -97,6 +97,12 @@ h1 {
     border: 1px solid #ddd;
     border-radius: 4px;
     background-color: #fdfdfd;
+}
+
+/* 新增：时间轴样式 */
+#timeline {
+    width: 100%;
+    margin-top: 1rem;
 }
 
 .controls {

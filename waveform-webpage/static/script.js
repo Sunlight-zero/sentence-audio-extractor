@@ -2,6 +2,8 @@
 
 import WaveSurfer from 'https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.esm.js'
 import RegionsPlugin from 'https://unpkg.com/wavesurfer.js@7/dist/plugins/regions.esm.js'
+// 新增：导入 Timeline 插件
+import TimelinePlugin from 'https://unpkg.com/wavesurfer.js@7/dist/plugins/timeline.esm.js'
 
 document.addEventListener('DOMContentLoaded', function () {
     const API_BASE_URL = 'http://127.0.0.1:5000';
@@ -95,14 +97,34 @@ document.addEventListener('DOMContentLoaded', function () {
             wavesurfer.destroy();
         }
 
+        // 关键修改：初始化插件
+        // 1. Regions 插件
+        const regions = RegionsPlugin.create();
+
+        // 2. Timeline 插件
+        const timeline = TimelinePlugin.create({
+            container: '#timeline',
+            // 自定义时间格式，例如 M:SS
+            formatTimeCallback: (seconds) => {
+                const minutes = Math.floor(seconds / 60);
+                const remainingSeconds = (seconds % 60).toFixed(0);
+                return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+            },
+        });
+
+        // 关键修改：重新配置 WaveSurfer 实例
         wavesurfer = WaveSurfer.create({
             container: '#waveform',
             waveColor: 'rgb(135, 168, 206)',
             progressColor: 'rgb(43, 83, 131)',
             media: videoElement,
+            // 新增：播放时自动滚动波形图
+            autoScroll: true,
+            // 新增：为长音频设置一个最小的像素/秒（即缩放级别），防止波形图过长
+            minPxPerSec: 100,
+            // 关键修改：使用 `plugins` 数组注册所有插件
+            plugins: [regions, timeline],
         });
-
-        const regions = wavesurfer.registerPlugin(RegionsPlugin.create());
 
         wavesurfer.on('decode', () => {
             regions.clearRegions();
