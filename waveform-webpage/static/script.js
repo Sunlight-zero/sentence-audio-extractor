@@ -159,10 +159,30 @@ document.addEventListener('DOMContentLoaded', function () {
         });
         
         // 修改“播放选区”按钮的逻辑
-        playSelectionBtn.onclick = () => {
+        playSelectionBtn.onclick = playSelectionBtn.onclick = async () => { // 将函数声明为 async
             if (activeRegion) {
+                // 标记我们意图播放的是选区
                 isPlayingRegion = true;
-                activeRegion.play();
+                try {
+                    // 关键改动：我们不再使用 activeRegion.play()
+                    // 而是手动控制 wavesurfer
+                    
+                    // 1. 定位到选区开始位置。
+                    //    wavesurfer.seekTo 的参数是 0 到 1 之间的进度值。
+                    const startProgress = activeRegion.start / wavesurfer.getDuration();
+                    wavesurfer.seekTo(startProgress);
+
+                    // 2. 调用 play() 并等待其 Promise 结果
+                    //    这可以确保我们能捕获到浏览器的播放限制错误
+                    await wavesurfer.play();
+
+                } catch (error) {
+                    // 如果播放失败，在这里捕获错误
+                    isPlayingRegion = false; // 重置标志
+                    console.error('音频播放失败:', error);
+                    // 你可以在这里向用户显示一个提示
+                    alert(`浏览器阻止了自动播放。\n错误: ${error.name}\n请尝试先点击视频播放器下方的播放按钮与页面进行交互，然后再使用“播放选区”功能。`);
+                }
             }
         };
     }

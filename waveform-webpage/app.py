@@ -3,6 +3,8 @@
 import os
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
+# 引入 waitress
+from waitress import serve
 import threading
 import webbrowser
 import traceback
@@ -139,13 +141,15 @@ def save_correction():
         return jsonify({"error": f"裁剪音频时出错: {e}"}), 500
 
 if __name__ == '__main__':
-    # 引入 waitress
-    from waitress import serve
+    # 不再需要检查 WERKZEUG_RUN_MAIN，因为它不适用于 Waitress
+    # 同样，在生产环境中自动打开浏览器通常不是一个好主意，可以手动打开
+    host = "127.0.0.1"
+    port = 5000
     
-    # 检查是否是主进程，避免在重载时重复打开浏览器
-    if not os.environ.get("WERKZEUG_RUN_MAIN"):
-        webbrowser.open_new("http://127.0.0.1:5000")
+    print(f"--- 启动 Waitress 生产服务器 ---")
+    print(f"服务器正在运行于 http://{host}:{port}")
+    print("请手动在浏览器中打开该地址。")
     
-    # 使用 waitress.serve 启动应用，它比 'flask run' 稳定得多
-    print("--- 启动 Waitress 生产服务器 ---")
-    serve(app, host="127.0.0.1", port=5000)
+    # 直接启动服务器
+    # webbrowser.open_new(f"http://{host}:{port}") # 建议手动打开
+    serve(app, host=host, port=port)
