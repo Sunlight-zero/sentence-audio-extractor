@@ -12,7 +12,7 @@ import traceback
 from werkzeug.utils import secure_filename
 
 # 根据您上传的文件名，确保 import 正确
-import sentence_matching as sm
+import utils.sentence_matching as sm
 
 # --- Flask 应用初始化与配置 ---
 app = Flask(__name__, static_folder='static', static_url_path='')
