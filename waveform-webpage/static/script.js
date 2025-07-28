@@ -2,7 +2,6 @@
 
 import WaveSurfer from 'https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.esm.js'
 import RegionsPlugin from 'https://unpkg.com/wavesurfer.js@7/dist/plugins/regions.esm.js'
-// 新增：导入 Timeline 插件
 import TimelinePlugin from 'https://unpkg.com/wavesurfer.js@7/dist/plugins/timeline.esm.js'
 
 document.addEventListener('DOMContentLoaded', function () {
@@ -97,14 +96,9 @@ document.addEventListener('DOMContentLoaded', function () {
             wavesurfer.destroy();
         }
 
-        // 关键修改：初始化插件
-        // 1. Regions 插件
         const regions = RegionsPlugin.create();
-
-        // 2. Timeline 插件
         const timeline = TimelinePlugin.create({
             container: '#timeline',
-            // 自定义时间格式，例如 M:SS
             formatTimeCallback: (seconds) => {
                 const minutes = Math.floor(seconds / 60);
                 const remainingSeconds = (seconds % 60).toFixed(0);
@@ -112,17 +106,13 @@ document.addEventListener('DOMContentLoaded', function () {
             },
         });
 
-        // 关键修改：重新配置 WaveSurfer 实例
         wavesurfer = WaveSurfer.create({
             container: '#waveform',
             waveColor: 'rgb(135, 168, 206)',
             progressColor: 'rgb(43, 83, 131)',
             media: videoElement,
-            // 新增：播放时自动滚动波形图
             autoScroll: true,
-            // 新增：为长音频设置一个最小的像素/秒（即缩放级别），防止波形图过长
             minPxPerSec: 100,
-            // 关键修改：使用 `plugins` 数组注册所有插件
             plugins: [regions, timeline],
         });
 
@@ -143,44 +133,44 @@ document.addEventListener('DOMContentLoaded', function () {
             updateTimestampInputs();
         });
 
-        // --- 关键修正: 监听 region-out 事件以暂停播放 ---
+        // --- 核心修正区域 ---
         let isPlayingRegion = false;
+
         regions.on('region-out', (region) => {
             // 当播放光标离开区域时，如果是由“播放选区”功能启动的，则暂停
             if (isPlayingRegion) {
-                isPlayingRegion = false;
                 wavesurfer.pause();
             }
         });
+        
+        // ★★★ 新增：监听 'pause' 事件以同步状态 ★★★
+        // 无论因何原因暂停（手动或代码触发），都重置 isPlayingRegion 标志。
+        // 这是解决“手动暂停后点击播放无效”问题的关键。
+        wavesurfer.on('pause', () => {
+            isPlayingRegion = false;
+        });
 
-        // 当播放结束时（例如到达视频末尾），也重置标志
         wavesurfer.on('finish', () => {
             isPlayingRegion = false;
         });
         
-        // 修改“播放选区”按钮的逻辑
-        playSelectionBtn.onclick = playSelectionBtn.onclick = async () => { // 将函数声明为 async
+        // ★★★ 修正：“播放选区”按钮的逻辑 ★★★
+        playSelectionBtn.onclick = async () => {
             if (activeRegion) {
                 // 标记我们意图播放的是选区
                 isPlayingRegion = true;
                 try {
-                    // 关键改动：我们不再使用 activeRegion.play()
-                    // 而是手动控制 wavesurfer
-                    
-                    // 1. 定位到选区开始位置。
-                    //    wavesurfer.seekTo 的参数是 0 到 1 之间的进度值。
+                    // 1. 手动定位到选区开始位置
                     const startProgress = activeRegion.start / wavesurfer.getDuration();
                     wavesurfer.seekTo(startProgress);
 
-                    // 2. 调用 play() 并等待其 Promise 结果
-                    //    这可以确保我们能捕获到浏览器的播放限制错误
+                    // 2. 调用 play() 并用 try/catch 处理浏览器自动播放限制
                     await wavesurfer.play();
 
                 } catch (error) {
-                    // 如果播放失败，在这里捕获错误
-                    isPlayingRegion = false; // 重置标志
+                    // 如果播放失败，在这里捕获错误并重置标志
+                    isPlayingRegion = false; 
                     console.error('音频播放失败:', error);
-                    // 你可以在这里向用户显示一个提示
                     alert(`浏览器阻止了自动播放。\n错误: ${error.name}\n请尝试先点击视频播放器下方的播放按钮与页面进行交互，然后再使用“播放选区”功能。`);
                 }
             }
