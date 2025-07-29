@@ -3,47 +3,44 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI 音频校对器</title>
+    <title>步骤 1: 处理视频</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="container">
-        <h1>AI 音频校对器</h1>
-
-        <div class="task-form">
-            <div class="form-group">
-                <label for="videoFile">上传视频/音频文件:</label>
-                <input type="file" id="videoFile" accept="video/*,audio/*">
-            </div>
-            <div class="form-group">
-                <label for="targetSentence">目标句子:</label>
-                <input type="text" id="targetSentence" placeholder="请输入要查找的日文句子">
-            </div>
-            <button id="startTaskBtn">开始处理</button>
+        <h1>步骤 1: 视频处理与句子定位</h1>
+        <p>上传一个视频文件和对应的日语句子，系统将自动找出句子在视频中的位置。</p>
+        
+        <div class="card">
+            <form id="upload-form">
+                <div class="form-group">
+                    <label for="videoFile">选择视频文件</label>
+                    <input type="file" id="videoFile" name="videoFile" accept="video/*,audio/*" required>
+                </div>
+                <div class="form-group">
+                    <label for="sentence">输入目标日语句子</label>
+                    <textarea id="sentence" name="sentence" rows="3" required placeholder="例：今日は、放課後みんなで練習する日だから..."></textarea>
+                </div>
+                <button type="submit" id="submit-btn">开始处理</button>
+            </form>
         </div>
 
-        <div id="statusDisplay" class="status-info">请选择文件并开始任务...</div>
+        <div id="status-container" class="card" style="display:none;">
+            <h2>处理状态</h2>
+            <div id="spinner" class="spinner" style="display:none;"></div>
+            <p id="status-message"></p>
+        </div>
 
-        <div id="corrector-ui" class="hidden">
-            <video id="videoPlayer" width="100%" controls></video>
-            <div id="waveform"></div>
-            <div id="timeline"></div>
-            
-            <div class="controls">
-                <div class="timestamps">
-                    <label for="start-time">开始时间:</label>
-                    <input type="text" id="start-time">
-                    <label for="end-time">结束时间:</label>
-                    <input type="text" id="end-time">
-                </div>
-                <div class="buttons">
-                    <button id="play-selection-btn">▶️ 播放选区</button>
-                    <button id="save-btn">✅ 确认并保存</button>
-                </div>
+        <div id="result-container" class="card" style="display:none;">
+            <h2>处理完成</h2>
+            <p>分析结果已生成。你可以下载结果文件，或直接进入下一步进行校对。</p>
+            <div class="result-actions">
+                <a id="download-json-btn" class="button" download>下载结果 (JSON)</a>
+                <a id="proofread-link-btn" class="button primary-action">前往校对页面 &raquo;</a>
             </div>
         </div>
     </div>
 
-    <script type="module" src="script.js"></script>
+    <script src="script.js"></script>
 </body>
 </html>

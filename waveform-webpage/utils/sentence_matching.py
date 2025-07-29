@@ -403,7 +403,7 @@ if __name__ == "__main__":
     DEVICE = "cuda"
     COMPUTE_TYPE = "float16"
     SEARCH_MODE = 'exhaustive'
-    CONFIDENCE_THRESHOLD = 80
+    CONFIDENCE_THRESHOLD = 75
 
     print("--- 开始执行直接裁剪任务 (已启用多进程模式) ---")
     if not os.path.exists(INPUT_AUDIO_PATH):

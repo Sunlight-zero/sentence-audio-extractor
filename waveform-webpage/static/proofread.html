@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>步骤 2: 校对与裁剪</title>
+    <!-- 使用与原始文件一致的样式表 -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>AI 音频校对器</h1>
+
+        <!-- 状态显示区域 -->
+        <div id="statusDisplay" class="status-info">正在加载数据...</div>
+
+        <!-- 手动上传区域，以防自动加载失败 -->
+        <div id="manual-upload-card" class="task-form hidden">
+             <h2>手动加载文件</h2>
+             <p style="text-align:left; margin-bottom:1rem;">未检测到自动传入的文件或加载失败。请手动上传视频和处理后生成的 JSON 文件。</p>
+             <div class="form-group">
+                 <label for="manualVideoFile">选择视频/音频文件</label>
+                 <input type="file" id="manualVideoFile" accept="video/*,audio/*">
+             </div>
+             <div class="form-group">
+                 <label for="manualJsonFile">选择 JSON 结果文件</label>
+                 <input type="file" id="manualJsonFile" accept=".json,application/json">
+             </div>
+             <button id="load-manual-files-btn">加载文件</button>
+         </div>
+
+        <!-- 校对UI，结构与原始文件完全一致 -->
+        <div id="corrector-ui" class="hidden">
+            <p><strong>目标句子:</strong> <span id="target-sentence-display"></span></p>
+            <video id="videoPlayer" width="100%" controls></video>
+            <div id="waveform"></div>
+            <div id="timeline"></div>
+            
+            <div class="controls">
+                <div class="timestamps">
+                    <label for="start-time">开始时间:</label>
+                    <input type="text" id="start-time">
+                    <label for="end-time">结束时间:</label>
+                    <input type="text" id="end-time">
+                </div>
+                <div class="buttons">
+                    <button id="play-selection-btn">▶️ 播放选区</button>
+                    <button id="save-btn">✅ 确认并裁剪</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 脚本必须为 module 类型，以支持 import -->
+    <script type="module" src="proofread.js"></script>
+</body>
+</html>

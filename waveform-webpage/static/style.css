@@ -1,3 +1,4 @@
+/* 共享样式，基于用户上传的 style.css */
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
     background-color: #f0f2f5;
@@ -17,10 +18,14 @@ body {
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
-h1 {
+h1, h2 {
     text-align: center;
     color: #1a202c;
     margin-bottom: 2rem;
+}
+
+p {
+    color: #4a5568;
 }
 
 .task-form {
@@ -41,7 +46,9 @@ h1 {
     margin-bottom: 0.5rem;
 }
 
-.form-group input[type="text"] {
+.form-group input[type="text"],
+.form-group input[type="file"],
+.form-group textarea {
     width: 100%;
     padding: 0.75rem;
     border: 1px solid #cbd5e0;
@@ -49,8 +56,8 @@ h1 {
     box-sizing: border-box;
 }
 
-#startTaskBtn {
-    display: block;
+.button, button {
+    display: inline-block;
     width: 100%;
     padding: 0.75rem;
     font-size: 1rem;
@@ -60,14 +67,17 @@ h1 {
     border: none;
     border-radius: 4px;
     cursor: pointer;
+    text-align: center;
+    text-decoration: none;
     transition: background-color 0.2s;
+    box-sizing: border-box;
 }
 
-#startTaskBtn:hover {
+button:hover {
     background-color: #3182ce;
 }
 
-#startTaskBtn:disabled {
+button:disabled {
     background-color: #a0aec0;
     cursor: not-allowed;
 }
@@ -99,10 +109,14 @@ h1 {
     background-color: #fdfdfd;
 }
 
-/* 新增：时间轴样式 */
 #timeline {
     width: 100%;
     margin-top: 1rem;
+}
+
+#corrector-ui > p {
+    font-weight: bold;
+    text-align: center;
 }
 
 .controls {
@@ -137,6 +151,7 @@ h1 {
     font-weight: 600;
     transition: background-color 0.2s;
     margin-right: 10px;
+    width: auto; /* 修正按钮宽度 */
 }
 
 #play-selection-btn {
