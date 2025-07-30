@@ -9,7 +9,7 @@
 <body>
     <div class="container">
         <h1>步骤 1: 视频处理与多句子定位</h1>
-        <p>上传一个视频文件，并在下方文本框中输入多个日语句子（每行一个）。系统将自动批量找出每个句子在视频中的位置。</p>
+        <p>上传一个视频文件，并在下方文本框中输入多个日语句子（每行一个），或直接上传一个包含所有句子的 .txt 文件。系统将自动批量找出每个句子在视频中的位置。</p>
         
         <div class="task-form">
             <form id="upload-form">
@@ -17,11 +17,18 @@
                     <label for="videoFile">选择视频或音频文件</label>
                     <input type="file" id="videoFile" name="videoFile" accept="video/*,audio/*" required>
                 </div>
+
                 <div class="form-group">
                     <label for="sentence">输入目标日语句子 (每行一个)</label>
                     <textarea id="sentence" name="sentence" rows="6" required 
                               placeholder="请在此处输入目标日语句子，每行一个。&#10;例如:&#10;今日は、放課後みんなで練習する日だから&#10;スコア忘れないようにしないと&#10;この前のライブ、すっごく盛り上がったよね"></textarea>
                 </div>
+
+                <div class="form-group">
+                    <label for="sentenceFile">或上传包含句子的 .txt 文件</label>
+                    <input type="file" id="sentenceFile" accept=".txt,text/plain">
+                </div>
+
                 <button type="submit" id="submit-btn" class="button">开始处理</button>
             </form>
         </div>

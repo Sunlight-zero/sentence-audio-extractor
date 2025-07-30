@@ -26,25 +26,23 @@ document.addEventListener('DOMContentLoaded', function () {
     let wavesurfer = null;
     let regionsPlugin = null;
     let activeRegion = null;
-    let analysisData = null; // 存储从JSON加载的原始数据
+    let analysisData = null; 
     let currentClipId = null;
     let isAudioUnlocked = false;
     
-    // 【功能恢复】严格按照原始文件，恢复此状态变量
+    // 【功能恢复】严格按照您的原始文件，恢复此状态变量
     let isPlayingRegion = false;
     
-    // confirmedClipsData: 暂存所有已确认的音频片段，用于最终打包
+    // confirmedClipsData: 暂存所有已确认的音频片段
     let confirmedClipsData = {};
 
     // --- 主初始化函数 ---
     async function init() {
-        // 绑定事件
         confirmClipBtn.addEventListener('click', handleConfirmClip);
         ignoreClipBtn.addEventListener('click', handleIgnoreClip);
         packageBtn.addEventListener('click', handlePackaging);
         loadManualBtn.addEventListener('click', handleManualLoad);
 
-        // 尝试从URL参数自动加载
         const params = new URLSearchParams(window.location.search);
         const videoUrl = params.get('video_url');
         const jsonUrl = params.get('json_url');
@@ -61,11 +59,11 @@ document.addEventListener('DOMContentLoaded', function () {
         try {
             updateStatus('正在加载分析结果...', 'loading');
             let jsonData;
-            if (typeof jsonUrl === 'string') { // URL
+            if (typeof jsonUrl === 'string') {
                 const response = await fetch(jsonUrl);
                 if (!response.ok) throw new Error(`无法加载JSON文件 (${response.status})`);
                 jsonData = await response.json();
-            } else { // File Object
+            } else {
                 jsonData = jsonUrl;
             }
             analysisData = jsonData;
@@ -74,9 +72,8 @@ document.addEventListener('DOMContentLoaded', function () {
                 throw new Error('分析结果中不包含任何有效的句子片段。');
             }
 
-            // 为每个 clip 添加校对状态和暂存的校对后时间
             analysisData.clips.forEach(clip => {
-                clip.status = 'pending'; // 'pending', 'confirmed', 'ignored'
+                clip.status = 'pending';
                 clip.proofed_start = clip.predicted_start;
                 clip.proofed_end = clip.predicted_end;
             });
@@ -112,32 +109,31 @@ document.addEventListener('DOMContentLoaded', function () {
                 plugins: [regionsPlugin, TimelinePlugin.create({ container: '#timeline' })],
             });
 
-            // 【功能恢复】严格按照原始文件，恢复播放相关的事件监听
-            // 监听播放器的 'pause' 事件来更新状态和按钮文本
+            // 【功能恢复】严格按照您的原始文件，恢复播放相关的事件监听
             wavesurfer.on('pause', () => {
                 isPlayingRegion = false;
                 playSelectionBtn.textContent = '▶️ 播放选区';
             });
             
-            // 监听播放器的 'play' 事件来更新状态和按钮文本
             wavesurfer.on('play', () => {
                 isPlayingRegion = true;
                 playSelectionBtn.textContent = '⏸️ 暂停';
             });
 
-            // 【功能恢复】严格按照原始文件，恢复播放超出选区时自动暂停的核心功能
+            // 【功能恢复】严格按照您的原始文件，恢复播放超出选区时自动暂停的核心功能
             regionsPlugin.on('region-out', () => {
                 if (isPlayingRegion) {
                     wavesurfer.pause();
                 }
             });
 
-            // 【功能恢复】严格按照原始文件，恢复播放按钮的点击逻辑
+            // 【功能恢复】严格按照您的原始文件，恢复播放按钮的点击逻辑
             playSelectionBtn.onclick = () => {
                 if (!activeRegion) return;
                 if (wavesurfer.isPlaying()) {
                     wavesurfer.pause();
                 } else {
+                    // 直接调用 activeRegion.play() 是正确的，因为它是由 click 事件直接触发的
                     activeRegion.play();
                 }
             };
@@ -165,7 +161,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 setupCorrectorForClip(clip);
             });
             sentenceList.appendChild(item);
-            updateClipStatusIndicator(clip); // 初始化状态显示
+            updateClipStatusIndicator(clip);
         });
     }
 
@@ -188,17 +184,25 @@ document.addEventListener('DOMContentLoaded', function () {
         });
         updateTimestampInputs();
         
-        // 监听选区更新，实时暂存时间
         activeRegion.on('update-end', () => {
-             clip.proofed_start = activeRegion.start;
-             clip.proofed_end = activeRegion.end;
+             // 关键修复：将拖拽更新后的高精度浮点数，强制四舍五入到小数点后3位。
+             const roundedStart = parseFloat(activeRegion.start.toFixed(3));
+             const roundedEnd = parseFloat(activeRegion.end.toFixed(3));
+
+             // 将“干净”的取整后数据，写回 activeRegion 对象自身，以同步其内部状态。
+             // 这是为了确保后续 activeRegion.play() 使用的是修正后的值。
+             activeRegion.start = roundedStart;
+             activeRegion.end = roundedEnd;
+
+             // 同时更新我们自己的应用状态和UI输入框
+             clip.proofed_start = roundedStart;
+             clip.proofed_end = roundedEnd;
              updateTimestampInputs();
         });
         
         const seekPosition = activeRegion.start / wavesurfer.getDuration();
         wavesurfer.seekTo(seekPosition);
 
-        // 解锁音频播放
         if (!isAudioUnlocked) {
             wavesurfer.play().then(() => {
                 wavesurfer.pause();
@@ -284,16 +288,14 @@ document.addEventListener('DOMContentLoaded', function () {
             const mapping = [];
             const videoBaseName = analysisData.original_video_filename.replace(/\.[^/.]+$/, "");
 
-            // Helper to sanitize filenames
             const sanitize = (str) => str.replace(/[\\?/*:"<>|]/g, "").replace(/\s+/g, '_');
 
             for (const clipId in confirmedClipsData) {
                 const clipData = confirmedClipsData[clipId];
-                // Find the original clip object to get the proofed times
                 const originalClip = analysisData.clips.find(c => c.id === clipId);
                 if (!originalClip) continue;
 
-                const sentencePart = sanitize(clipData.sentence.substring(0, 20)); // Sanitize and limit length
+                const sentencePart = sanitize(clipData.sentence.substring(0, 20));
                 const timeRangePart = `${originalClip.proofed_start.toFixed(2)}s-${originalClip.proofed_end.toFixed(2)}s`;
                 
                 const desiredFilename = `${videoBaseName}_${sentencePart}_${timeRangePart}.wav`;
@@ -328,7 +330,6 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     }
 
-    // --- 手动加载逻辑 ---
     function handleManualLoad() {
         const videoFile = manualVideoInput.files[0];
         const jsonFile = manualJsonInput.files[0];
@@ -349,7 +350,6 @@ document.addEventListener('DOMContentLoaded', function () {
         jsonReader.readAsText(jsonFile);
     }
 
-    // --- 工具函数 ---
     function updateClipStatusIndicator(clip) {
         const indicator = document.getElementById(`status-${clip.id}`);
         if (!indicator) return;
@@ -388,6 +388,5 @@ document.addEventListener('DOMContentLoaded', function () {
         else if (type === 'error') statusDisplay.style.backgroundColor = '#fed7d7';
     }
 
-    // --- 启动程序 ---
     init();
 });

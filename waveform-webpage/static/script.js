@@ -10,6 +10,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const downloadJsonBtn = document.getElementById('download-json-btn');
     const proofreadLinkBtn = document.getElementById('proofread-link-btn');
     
+    // 【新增功能】获取句子输入框和文件选择框
+    const sentenceTextarea = document.getElementById('sentence');
+    const sentenceFileInput = document.getElementById('sentenceFile');
+
     // --- 诊断日志 ---
     if (!form) {
         console.error("错误：无法找到 ID 为 'upload-form' 的表单元素。请检查 index.html。");
@@ -23,7 +27,38 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let pollInterval;
 
-    // --- 核心事件监听 ---
+    // 【新增功能】监听文件选择框的变化事件
+    if (sentenceFileInput && sentenceTextarea) {
+        sentenceFileInput.addEventListener('change', (event) => {
+            const file = event.target.files[0];
+            if (!file) {
+                return; // 如果用户取消选择，则不执行任何操作
+            }
+
+            // 使用 FileReader API 来读取文件内容
+            const reader = new FileReader();
+            
+            // 定义文件成功读取后的回调函数
+            reader.onload = (e) => {
+                const fileContent = e.target.result;
+                // 将文件内容设置到 textarea 中
+                sentenceTextarea.value = fileContent;
+                console.log(`成功加载文件 ${file.name} 的内容到文本框。`);
+            };
+
+            // 定义文件读取失败的回调函数
+            reader.onerror = (e) => {
+                console.error("读取文件时出错:", e);
+                alert("读取文件时发生错误。");
+            };
+
+            // 以 UTF-8 编码读取文件内容
+            reader.readAsText(file, 'UTF-8');
+        });
+    }
+
+
+    // --- 核心事件监听 (无变动) ---
     form.addEventListener('submit', async (e) => {
         e.preventDefault(); // 阻止表单默认的提交刷新行为
         console.log("表单提交事件被触发。");
