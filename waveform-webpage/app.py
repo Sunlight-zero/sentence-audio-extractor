@@ -52,6 +52,10 @@ def process_video():
     if not sentences:
         return jsonify({"error": "目标句子不能为空。"}), 400
 
+    # 【修改】获取前端音源分离复选框的状态
+    # 如果复选框被勾选，request.form.get('separateVocals') 的值会是 'on'。
+    enable_separation = request.form.get('separateVocals') == 'on'
+
     video_file = request.files['videoFile']
     if video_file.filename == '':
         return jsonify({"error": "未选择文件。"}), 400
@@ -63,8 +67,8 @@ def process_video():
     task_id = str(uuid.uuid4())
     tasks[task_id] = {"status": "processing", "message": "任务已开始，正在初始化..."}
 
-    # --- 关键修改: 不再向后台线程传递 app 对象 ---
-    thread = threading.Thread(target=run_processing_task, args=(task_id, video_path, sentences, filename))
+    # --- 关键修改: 将 enable_separation 传递给后台线程 ---
+    thread = threading.Thread(target=run_processing_task, args=(task_id, video_path, sentences, filename, enable_separation))
     thread.start()
 
     return jsonify({"status": "processing", "task_id": task_id})
@@ -135,13 +139,17 @@ def serve_output(filename):
 # ==============================================================================
 # 后台任务函数
 # ==============================================================================
-def run_processing_task(task_id, video_path, sentences, original_filename):
+def run_processing_task(task_id, video_path, sentences, original_filename, enable_separation):
     """在后台线程中运行的完整处理流程。"""
     try:
         def progress_callback(message):
             if task_id in tasks:
                 tasks[task_id]["message"] = message
 
+        # 【修改】
+        # 1. enable_source_separation: 使用前端传入的布尔值。
+        # 2. clip_vocals_only: 硬编码为 False，确保无论是否分离，
+        #    后续的 clip_source_path 始终指向原始文件。
         results_data = sm.find_multiple_sentences_timestamps(
             audio_path=video_path,
             target_sentences=sentences,
@@ -150,8 +158,8 @@ def run_processing_task(task_id, video_path, sentences, original_filename):
             compute_type="float16",
             confidence_threshold=70,
             search_mode='exhaustive',
-            enable_source_separation=True,
-            clip_vocals_only=True,
+            enable_source_separation=enable_separation,
+            clip_vocals_only=False,
             progress_callback=progress_callback
         )
         
