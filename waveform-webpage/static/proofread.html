@@ -3,10 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>步骤 2: 校对与裁剪</title>
+    <title>步骤 2: 校对与打包</title>
     <link rel="stylesheet" href="style.css">
+    <!-- 引入 JSZip 库，用于在浏览器端生成ZIP文件 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <style>
-        /* 针对校对页面的额外样式 */
+        /* 针对新版校对页面的额外样式 */
         #sentence-list .sentence-item {
             display: flex;
             align-items: center;
@@ -24,28 +26,44 @@
         #sentence-list .sentence-item.active {
             background-color: #ebf8ff;
             border-color: #90cdf4;
+            font-weight: 600;
         }
-        #sentence-list .sentence-text {
+        .sentence-text {
             flex-grow: 1;
         }
-        #sentence-list .sentence-status {
+        .sentence-status {
             margin-left: 1rem;
             flex-shrink: 0;
-        }
-        #sentence-list .download-link {
             font-weight: bold;
-            color: #38a169;
-            text-decoration: none;
+            width: 80px; /* 固定宽度防止跳动 */
+            text-align: right;
+        }
+        .sentence-status.confirmed {
+            color: #38a169; /* Green */
+        }
+        .sentence-status.ignored {
+            color: #a0aec0; /* Gray */
+        }
+        #package-container {
+            margin-top: 2rem;
+            padding: 1.5rem;
+            background-color: #f7fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            text-align: center;
+        }
+        .buttons button {
+             margin-bottom: 0.5rem;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>AI 音频校对器</h1>
+        <h1>AI 音频校对与打包</h1>
 
         <div id="statusDisplay" class="status-info">正在加载数据...</div>
 
-        <!-- 【功能恢复】手动上传区域，以防自动加载失败 -->
+        <!-- 手动上传区域 -->
         <div id="manual-upload-card" class="task-form hidden">
              <h2>手动加载文件</h2>
              <p style="text-align:left; margin-bottom:1rem;">未检测到自动传入的文件或加载失败。请手动上传视频和处理后生成的 JSON 文件。</p>
@@ -84,9 +102,17 @@
                 </div>
                 <div class="buttons">
                     <button id="play-selection-btn">▶️ 播放选区</button>
-                    <button id="save-btn">✅ 确认并裁剪</button>
+                    <button id="confirm-clip-btn" style="background-color: #48bb78;">✅ 确认此音频</button>
+                    <button id="ignore-clip-btn" style="background-color: #a0aec0;">❌ 忽略此句子</button>
                 </div>
             </div>
+        </div>
+        
+        <!-- 打包下载区域 -->
+        <div id="package-container" class="hidden">
+            <h2>完成并打包</h2>
+            <p>当所有需要的句子都校对并确认为 "✔ 已确认" 后，点击下方按钮生成包含所有音频和映射文件的 ZIP 压缩包。</p>
+            <button id="package-btn" class="button" style="background-color: #dd6b20;">📦 生成并下载 ZIP (0 个文件)</button>
         </div>
     </div>
 

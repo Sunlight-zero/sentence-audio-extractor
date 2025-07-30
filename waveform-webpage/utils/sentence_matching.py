@@ -275,13 +275,17 @@ def find_multiple_sentences_timestamps(
             confidence_threshold=confidence_threshold
         )
         if match_result:
+            # ==========================================================
+            # === 核心修改：将时间戳四舍五入到三位小数 ===
+            # ==========================================================
             all_results.append({
                 "id": f"clip-{i}",
                 "sentence": sentence,
-                "predicted_start": match_result['start_timestamp'],
-                "predicted_end": match_result['end_timestamp'],
+                "predicted_start": round(match_result['start_timestamp'], 3),
+                "predicted_end": round(match_result['end_timestamp'], 3),
                 "score": match_result['score']
             })
+            # ==========================================================
     if not all_results:
         update_progress("处理完成，但未能找到任何可信的匹配项。")
     else:
