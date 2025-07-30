@@ -3,40 +3,39 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>步骤 1: 处理视频</title>
+    <title>步骤 1: 视频处理</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="container">
-        <h1>步骤 1: 视频处理与句子定位</h1>
-        <p>上传一个视频文件和对应的日语句子，系统将自动找出句子在视频中的位置。</p>
+        <h1>步骤 1: 视频处理与多句子定位</h1>
+        <p>上传一个视频文件，并在下方文本框中输入多个日语句子（每行一个）。系统将自动批量找出每个句子在视频中的位置。</p>
         
-        <div class="card">
+        <div class="task-form">
             <form id="upload-form">
                 <div class="form-group">
-                    <label for="videoFile">选择视频文件</label>
+                    <label for="videoFile">选择视频或音频文件</label>
                     <input type="file" id="videoFile" name="videoFile" accept="video/*,audio/*" required>
                 </div>
                 <div class="form-group">
-                    <label for="sentence">输入目标日语句子</label>
-                    <textarea id="sentence" name="sentence" rows="3" required placeholder="例：今日は、放課後みんなで練習する日だから..."></textarea>
+                    <label for="sentence">输入目标日语句子 (每行一个)</label>
+                    <textarea id="sentence" name="sentence" rows="6" required 
+                              placeholder="请在此处输入目标日语句子，每行一个。&#10;例如:&#10;今日は、放課後みんなで練習する日だから&#10;スコア忘れないようにしないと&#10;この前のライブ、すっごく盛り上がったよね"></textarea>
                 </div>
-                <button type="submit" id="submit-btn">开始处理</button>
+                <button type="submit" id="submit-btn" class="button">开始处理</button>
             </form>
         </div>
 
-        <div id="status-container" class="card" style="display:none;">
-            <h2>处理状态</h2>
-            <div id="spinner" class="spinner" style="display:none;"></div>
+        <div id="status-container" class="status-info" style="display:none;">
             <p id="status-message"></p>
         </div>
 
-        <div id="result-container" class="card" style="display:none;">
+        <div id="result-container" style="display:none;">
             <h2>处理完成</h2>
-            <p>分析结果已生成。你可以下载结果文件，或直接进入下一步进行校对。</p>
-            <div class="result-actions">
+            <p>分析结果已生成。你可以下载包含所有时间戳的JSON文件，或直接进入校对页面。</p>
+            <div class="buttons">
                 <a id="download-json-btn" class="button" download>下载结果 (JSON)</a>
-                <a id="proofread-link-btn" class="button primary-action">前往校对页面 &raquo;</a>
+                <a id="proofread-link-btn" class="button">前往校对页面 &raquo;</a>
             </div>
         </div>
     </div>

@@ -4,17 +4,48 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>步骤 2: 校对与裁剪</title>
-    <!-- 使用与原始文件一致的样式表 -->
     <link rel="stylesheet" href="style.css">
+    <style>
+        /* 针对校对页面的额外样式 */
+        #sentence-list .sentence-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.75rem;
+            border: 1px solid #e2e8f0;
+            border-radius: 6px;
+            margin-bottom: 0.5rem;
+            cursor: pointer;
+            transition: background-color 0.2s, border-color 0.2s;
+        }
+        #sentence-list .sentence-item:hover {
+            background-color: #f7fafc;
+        }
+        #sentence-list .sentence-item.active {
+            background-color: #ebf8ff;
+            border-color: #90cdf4;
+        }
+        #sentence-list .sentence-text {
+            flex-grow: 1;
+        }
+        #sentence-list .sentence-status {
+            margin-left: 1rem;
+            flex-shrink: 0;
+        }
+        #sentence-list .download-link {
+            font-weight: bold;
+            color: #38a169;
+            text-decoration: none;
+        }
+    </style>
 </head>
 <body>
     <div class="container">
         <h1>AI 音频校对器</h1>
 
-        <!-- 状态显示区域 -->
         <div id="statusDisplay" class="status-info">正在加载数据...</div>
 
-        <!-- 手动上传区域，以防自动加载失败 -->
+        <!-- 【功能恢复】手动上传区域，以防自动加载失败 -->
         <div id="manual-upload-card" class="task-form hidden">
              <h2>手动加载文件</h2>
              <p style="text-align:left; margin-bottom:1rem;">未检测到自动传入的文件或加载失败。请手动上传视频和处理后生成的 JSON 文件。</p>
@@ -26,15 +57,23 @@
                  <label for="manualJsonFile">选择 JSON 结果文件</label>
                  <input type="file" id="manualJsonFile" accept=".json,application/json">
              </div>
-             <button id="load-manual-files-btn">加载文件</button>
+             <button id="load-manual-files-btn" class="button">加载文件</button>
          </div>
 
-        <!-- 校对UI，结构与原始文件完全一致 -->
+        <!-- 句子选择器 -->
+        <div id="sentence-selector-card" class="hidden">
+            <h2>选择要校对的句子</h2>
+            <div id="sentence-list">
+                <!-- JS动态填充 -->
+            </div>
+        </div>
+
+        <!-- 校对UI -->
         <div id="corrector-ui" class="hidden">
-            <p><strong>目标句子:</strong> <span id="target-sentence-display"></span></p>
+            <h3 id="current-sentence-title" style="text-align:center; margin-bottom:1rem;">请从上方列表选择一个句子</h3>
             <video id="videoPlayer" width="100%" controls></video>
             <div id="waveform"></div>
-            <div id="timeline"></div>
+            <div id="timeline" style="margin-top: 10px;"></div>
             
             <div class="controls">
                 <div class="timestamps">
@@ -51,7 +90,7 @@
         </div>
     </div>
 
-    <!-- 脚本必须为 module 类型，以支持 import -->
+    <!-- 脚本必须为 module 类型 -->
     <script type="module" src="proofread.js"></script>
 </body>
 </html>
