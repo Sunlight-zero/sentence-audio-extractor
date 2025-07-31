@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>步骤 1: 视频处理</title>
     <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="index.css">
 </head>
 <body>
     <div class="container">
@@ -29,9 +30,9 @@
                     <input type="file" id="sentenceFile" accept=".txt,text/plain">
                 </div>
 
-                <div class="form-group" style="display: flex; align-items: center; gap: 10px; margin-top: 1.5rem;">
-                    <input type="checkbox" id="separateVocals" name="separateVocals" checked style="width: auto; height: auto; transform: scale(1.2);">
-                    <label for="separateVocals" style="margin-bottom: 0; font-weight: normal;">启用音源分离 (建议勾选，可显著提高嘈杂环境下的语音识别精度)</label>
+                <div class="form-group form-group-checkbox-container">
+                    <input type="checkbox" id="separateVocals" name="separateVocals" checked>
+                    <label for="separateVocals">启用音源分离 (建议勾选，可显著提高嘈杂环境下的语音识别精度)</label>
                 </div>
 
 
@@ -39,11 +40,11 @@
             </form>
         </div>
 
-        <div id="status-container" class="status-info" style="display:none;">
+        <div id="status-container" class="status-info">
             <p id="status-message"></p>
         </div>
 
-        <div id="result-container" style="display:none;">
+        <div id="result-container">
             <h2>处理完成</h2>
             <p>分析结果已生成。你可以下载包含所有时间戳的JSON文件，或直接进入校对页面。</p>
             <div class="buttons">
@@ -53,6 +54,6 @@
         </div>
     </div>
 
-    <script src="script.js"></script>
+    <script src="index.js"></script>
 </body>
 </html>

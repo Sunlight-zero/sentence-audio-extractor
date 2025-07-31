@@ -5,57 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>步骤 2: 校对与打包</title>
     <link rel="stylesheet" href="style.css">
-    <!-- 引入 JSZip 库，用于在浏览器端生成ZIP文件 -->
+    <link rel="stylesheet" href="proofread.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-    <style>
-        /* 针对新版校对页面的额外样式 */
-        #sentence-list .sentence-item {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 0.75rem;
-            border: 1px solid #e2e8f0;
-            border-radius: 6px;
-            margin-bottom: 0.5rem;
-            cursor: pointer;
-            transition: background-color 0.2s, border-color 0.2s;
-        }
-        #sentence-list .sentence-item:hover {
-            background-color: #f7fafc;
-        }
-        #sentence-list .sentence-item.active {
-            background-color: #ebf8ff;
-            border-color: #90cdf4;
-            font-weight: 600;
-        }
-        .sentence-text {
-            flex-grow: 1;
-        }
-        .sentence-status {
-            margin-left: 1rem;
-            flex-shrink: 0;
-            font-weight: bold;
-            width: 80px; /* 固定宽度防止跳动 */
-            text-align: right;
-        }
-        .sentence-status.confirmed {
-            color: #38a169; /* Green */
-        }
-        .sentence-status.ignored {
-            color: #a0aec0; /* Gray */
-        }
-        #package-container {
-            margin-top: 2rem;
-            padding: 1.5rem;
-            background-color: #f7fafc;
-            border: 1px solid #e2e8f0;
-            border-radius: 6px;
-            text-align: center;
-        }
-        .buttons button {
-             margin-bottom: 0.5rem;
-        }
-    </style>
 </head>
 <body>
     <div class="container">
@@ -63,10 +14,9 @@
 
         <div id="statusDisplay" class="status-info">正在加载数据...</div>
 
-        <!-- 手动上传区域 -->
         <div id="manual-upload-card" class="task-form hidden">
              <h2>手动加载文件</h2>
-             <p style="text-align:left; margin-bottom:1rem;">未检测到自动传入的文件或加载失败。请手动上传视频和处理后生成的 JSON 文件。</p>
+             <p>未检测到自动传入的文件或加载失败。请手动上传视频和处理后生成的 JSON 文件。</p>
              <div class="form-group">
                  <label for="manualVideoFile">选择视频/音频文件</label>
                  <input type="file" id="manualVideoFile" accept="video/*,audio/*">
@@ -82,17 +32,16 @@
         <div id="sentence-selector-card" class="hidden">
             <h2>选择要校对的句子</h2>
             <div id="sentence-list">
-                <!-- JS动态填充 -->
-            </div>
+                    <!-- JS动态填充 -->
+                </div>
         </div>
 
-        <!-- 校对UI -->
         <div id="corrector-ui" class="hidden">
             <video id="videoPlayer" width="100%" controls></video>
             <div id="waveform"></div>
-            <div id="timeline" style="margin-top: 10px;"></div>
+            <div id="timeline"></div>
 
-            <p id="current-sentence-title" style="text-align:center; margin-bottom:1rem;">请从上方列表选择一个句子</p>
+            <p id="current-sentence-title">请从上方列表选择一个句子</p>
             
             <div class="controls">
                 <div class="timestamps">
@@ -103,21 +52,19 @@
                 </div>
                 <div class="buttons">
                     <button id="play-selection-btn">▶️ 播放选区</button>
-                    <button id="confirm-clip-btn" style="background-color: #48bb78;">✅ 确认此音频</button>
-                    <button id="ignore-clip-btn" style="background-color: #a0aec0;">❌ 忽略此句子</button>
+                    <button id="confirm-clip-btn">✅ 确认此音频</button>
+                    <button id="ignore-clip-btn">❌ 忽略此句子</button>
                 </div>
             </div>
         </div>
         
-        <!-- 打包下载区域 -->
         <div id="package-container" class="hidden">
             <h2>完成并打包</h2>
             <p>当所有需要的句子都校对并确认为 "✔ 已确认" 后，点击下方按钮生成包含所有音频和映射文件的 ZIP 压缩包。</p>
-            <button id="package-btn" class="button" style="background-color: #dd6b20;">📦 生成并下载 ZIP (0 个文件)</button>
+            <button id="package-btn" class="button">📦 生成并下载 ZIP (0 个文件)</button>
         </div>
     </div>
 
-    <!-- 脚本必须为 module 类型 -->
     <script type="module" src="proofread.js"></script>
 </body>
 </html>

@@ -1,0 +1,30 @@
+/* index.css */
+/* 从 index.html 中分离出的特定样式 */
+
+/* 用于包裹“启用音源分离”复选框和标签的容器 */
+.form-group-checkbox-container {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 1.5rem;
+}
+
+/* “启用音源分离”复选框的样式 */
+#separateVocals {
+    width: auto;
+    height: auto;
+    transform: scale(1.2);
+}
+
+/* “启用音源分离”标签的样式 */
+label[for="separateVocals"] {
+    margin-bottom: 0;
+    font-weight: normal;
+}
+
+/* 状态信息和结果容器的初始状态，默认为隐藏 */
+/* JavaScript 可能会在运行时改变它们的 display 属性来显示它们 */
+#status-container,
+#result-container {
+    display: none;
+}

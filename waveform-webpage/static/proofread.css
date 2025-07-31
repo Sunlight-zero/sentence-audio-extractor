@@ -1,0 +1,84 @@
+/* proofread.css */
+/* 从 proofread.html 中分离出的特定样式 */
+
+/* === 原 <style> 标签中的内容 === */
+#sentence-list .sentence-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    margin-bottom: 0.5rem;
+    cursor: pointer;
+    transition: background-color 0.2s, border-color 0.2s;
+}
+#sentence-list .sentence-item:hover {
+    background-color: #f7fafc;
+}
+#sentence-list .sentence-item.active {
+    background-color: #ebf8ff;
+    border-color: #90cdf4;
+    font-weight: 600;
+}
+.sentence-text {
+    flex-grow: 1;
+}
+.sentence-status {
+    margin-left: 1rem;
+    flex-shrink: 0;
+    font-weight: bold;
+    width: 80px; /* 固定宽度防止跳动 */
+    text-align: right;
+}
+.sentence-status.confirmed {
+    color: #38a169; /* Green */
+}
+.sentence-status.ignored {
+    color: #a0aec0; /* Gray */
+}
+#package-container {
+    margin-top: 2rem;
+    padding: 1.5rem;
+    background-color: #f7fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    text-align: center;
+}
+.buttons button {
+     margin-bottom: 0.5rem;
+}
+
+/* === 从内联 style 属性分离出的样式 === */
+
+/* 手动加载卡片内的描述文字 */
+#manual-upload-card p {
+    text-align: left;
+    margin-bottom: 1rem;
+}
+
+/* 波形图下方的时间线 */
+#timeline {
+    margin-top: 10px;
+}
+
+/* 当前正在校对的句子标题 */
+#current-sentence-title {
+    text-align: center;
+    margin-bottom: 1rem;
+}
+
+/* “确认此音频”按钮的背景色 */
+#confirm-clip-btn {
+    background-color: #48bb78;
+}
+
+/* “忽略此句子”按钮的背景色 */
+#ignore-clip-btn {
+    background-color: #a0aec0;
+}
+
+/* “生成并下载 ZIP”按钮的背景色 */
+#package-btn {
+    background-color: #dd6b20;
+}
