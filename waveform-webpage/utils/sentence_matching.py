@@ -305,5 +305,54 @@ def find_multiple_sentences_timestamps(
 # 6. 主程序入口 (无变动)
 # ==============================================================================
 if __name__ == "__main__":
-    # ... 测试代码与之前版本一致 ...
-    pass
+    # 确保在 Windows 或 macOS 上，multiprocessing 的 'spawn' 或 'forkserver' 模式正常工作
+    multiprocessing.freeze_support()
+    
+    # --- 配置任务 (直接运行时使用) ---
+    
+    INPUT_AUDIO_PATH = r"D:\program\Python\auto-workflows\stt\stt-test\pjsk-test.mp4"
+    TARGET_SENTENCE = "今日は、放課後みんなで練習する日だから、 スコア忘れないようにしないと"
+    OUTPUT_AUDIO_PATH = "clipped_sentence.wav"
+
+    ENABLE_SOURCE_SEPARATION = True
+    DEMUCS_MODELS_PATH = None
+    CLIP_VOCALS_ONLY = False
+    EXPORT_TRANSCRIPTION_FILE = True
+    TRANSCRIPTION_OUTPUT_PATH = "full_transcription.txt"
+
+    MODEL_PATH_OR_SIZE = "D:/ACGN/gal/whisper/models/faster-whisper-medium"
+    DEVICE = "cuda"
+    COMPUTE_TYPE = "float16"
+    SEARCH_MODE = 'exhaustive'
+    CONFIDENCE_THRESHOLD = 75
+
+    print("--- 开始执行直接裁剪任务 (已启用多进程模式) ---")
+    if not os.path.exists(INPUT_AUDIO_PATH):
+        print(f"错误: 输入文件 '{INPUT_AUDIO_PATH}' 不存在。请检查路径。")
+    else:
+        # 1. 调用主流程函数获取 AI 预测的时间戳和裁剪源
+        result = find_sentence_timestamps(
+            audio_path=INPUT_AUDIO_PATH,
+            target_sentence=TARGET_SENTENCE,
+            model_path_or_size=MODEL_PATH_OR_SIZE,
+            device=DEVICE,
+            compute_type=COMPUTE_TYPE,
+            search_mode=SEARCH_MODE,
+            confidence_threshold=CONFIDENCE_THRESHOLD,
+            enable_source_separation=ENABLE_SOURCE_SEPARATION,
+            demucs_models_path=DEMUCS_MODELS_PATH,
+            export_transcription_path=TRANSCRIPTION_OUTPUT_PATH if EXPORT_TRANSCRIPTION_FILE else None,
+            clip_vocals_only=CLIP_VOCALS_ONLY
+        )
+        
+        # 2. 如果成功找到，立即执行裁剪
+        if result:
+            print("\n--- AI 预测成功，立即执行裁剪 ---")
+            finalize_clip(
+                source_path=result["clip_source_path"],
+                start_time=result["start_time"],
+                end_time=result["end_time"],
+                output_path=OUTPUT_AUDIO_PATH
+            )
+        else:
+            print("\n--- 任务结束，未能找到匹配项或发生错误，未执行裁剪。 ---")
