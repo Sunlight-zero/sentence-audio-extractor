@@ -17,6 +17,8 @@ from thefuzz import fuzz
 import pykakasi
 import mojimoji
 
+from .fuzzy_string_matching import fuzzy_match
+
 # ==============================================================================
 # 1. 文本标准化模块 (无变动)
 # ==============================================================================
@@ -116,7 +118,7 @@ def find_best_match_in_words(
                 score = fuzz.ratio(norm_target, current_sequence)
                 if score > best_score:
                     best_score, best_start_idx, best_end_idx = score, i, j
-    else:  # 'efficient' mode
+    elif search_mode == 'efficient':  # 'efficient' mode
         print("使用模式: 高效搜索 (efficient)")
         target_len = len(norm_target)
         min_len = max(1, int(target_len * 0.6))
@@ -131,6 +133,10 @@ def find_best_match_in_words(
                 score = fuzz.ratio(norm_target, current_sequence)
                 if score > best_score:
                     best_score, best_start_idx, best_end_idx = score, i, j - 1
+    else: # 'levenshtein' 编辑距离模式
+        # TODO
+        # best_start_idx, best_end_idx, best_score = fuzzy_match(...)
+        pass
     
     print(f"最高相似度得分: {best_score}")
     if best_score < confidence_threshold:
