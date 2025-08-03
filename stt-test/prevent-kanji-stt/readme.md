@@ -1,0 +1,1 @@
+参考自文章 [faster-whisperで漢字を抑制してひらがな、カタカナ出力する #Python - Qiita](https://qiita.com/maishikawa/items/dcadfeebf693080f0415 ) ，让 Whisper 转写出纯假名。
