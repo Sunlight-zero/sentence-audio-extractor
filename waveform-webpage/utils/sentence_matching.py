@@ -19,6 +19,9 @@ import mojimoji
 
 from .fuzzy_string_matching import fuzzy_match
 
+
+SUPPRESS_TOKEN_FILE = None
+
 # ==============================================================================
 # 1. 文本标准化模块 (无变动)
 # ==============================================================================
@@ -65,15 +68,48 @@ def separate_vocals(audio_path: str, output_dir: str = "temp_separated", models_
     print("主进程: 音源分离完成。")
     return result
 
-def _transcribe_audio_worker(queue: multiprocessing.Queue, audio_path: str, model_path: str, device: str, compute_type: str):
+def load_suppress_tokens(file_path):
+    with open(file_path, 'r', encoding='utf-8') as f:
+        return [int(token) for token in f.read().split()]
+
+def _transcribe_audio_worker(
+        queue: multiprocessing.Queue, 
+        audio_path: str, model_path: str, 
+        device: str, compute_type: str,
+        suppress_file_path: Optional[str]=SUPPRESS_TOKEN_FILE
+    ):
     """【子进程】执行Whisper语音识别。"""
     print(f"子进程: 加载 Whisper 模型 '{model_path}'...")
     try:
+        kwargs = dict()
+        if suppress_file_path:
+            suppress_tokens = load_suppress_tokens(suppress_file_path)
+            kwargs["suppress_tokens"] = suppress_tokens
+        
         model = WhisperModel(model_path, device=device, compute_type=compute_type)
         print(f"子进程: 开始转写音频 '{os.path.basename(audio_path)}'...")
-        segments, _ = model.transcribe(audio_path, language="ja", word_timestamps=True)
-        all_words = [word for segment in segments for word in segment.words]
+        segments, _ = model.transcribe(
+            audio_path, 
+            language="ja", 
+            word_timestamps=True,
+            **kwargs
+        )
+        all_words = []
+        print("子进程: 实时转写进度...")
+        for segment in segments:
+            # 格式化时间戳为 MM:SS
+            start_time_str = time.strftime('%M:%S', time.gmtime(segment.start))
+            # 打印进度
+            print(f"  [{start_time_str}] {segment.text.strip()}")
+            # 收集词语以便后续处理
+            if segment.words:
+                all_words.extend(segment.words)
+        
+        if len(all_words) == 0:
+            raise Exception("错误：未识别出任何词语")
         print(f"子进程: 转写完成，识别出 {len(all_words)} 个词。")
+        sentence = ''.join(word.word for word in all_words)
+        print(f"识别的句子为：{sentence}")
         queue.put(all_words)
     except Exception as e:
         print(f"子进程 Whisper 错误: {e}")
@@ -84,7 +120,10 @@ def transcribe_audio(audio_path: str, model_path: str, device: str, compute_type
     print("\n--- 语音识别模块 ---")
     ctx = multiprocessing.get_context('spawn')
     q = ctx.Queue()
-    process = ctx.Process(target=_transcribe_audio_worker, args=(q, audio_path, model_path, device, compute_type))
+    process = ctx.Process(
+        target=_transcribe_audio_worker,
+        args=(q, audio_path, model_path, device, compute_type, SUPPRESS_TOKEN_FILE)
+    )
     process.start()
     result = q.get()
     process.join()
@@ -108,6 +147,8 @@ def find_best_match_in_words(
         return None
     
     norm_words = [normalize_japanese_text(word.word) for word in all_words]
+    sentence = ''.join(norm_words)
+    # print(f"标准化的原始音频为：{sentence}")
     best_score, best_start_idx, best_end_idx = -1, -1, -1
 
     if search_mode == 'exhaustive':
@@ -145,7 +186,7 @@ def find_best_match_in_words(
         
     print(f"-> 匹配成功!")
     return {
-        "start_timestamp": all_words[best_start_idx].start,
+        "start_timestamp": all_words[best_start_idx].start - 0.3, # 手动往前调整
         "end_timestamp": all_words[best_end_idx].end,
         "matched_text": "".join([w.word for w in all_words[best_start_idx:best_end_idx+1]]),
         "score": best_score
@@ -317,7 +358,7 @@ if __name__ == "__main__":
     # --- 配置任务 (直接运行时使用) ---
     
     INPUT_AUDIO_PATH = r"D:\program\Python\auto-workflows\stt\stt-test\pjsk-test.mp4"
-    TARGET_SENTENCE = "今日は、放課後みんなで練習する日だから、 スコア忘れないようにしないと"
+    TARGET_SENTENCE = "スコア忘れないようにしないと"
     OUTPUT_AUDIO_PATH = "clipped_sentence.wav"
 
     ENABLE_SOURCE_SEPARATION = True
