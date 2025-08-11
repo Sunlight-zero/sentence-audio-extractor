@@ -17,7 +17,14 @@ from thefuzz import fuzz
 import pykakasi
 import mojimoji
 
-from .fuzzy_string_matching import fuzzy_match
+try:
+    # 尝试相对导入，这在作为模块导入时会成功
+    from .fuzzy_string_matching import fuzzy_match
+    from .llm_handler import llm_normalize
+except ImportError:
+    # 如果相对导入失败，说明是作为顶层脚本运行，回退到绝对导入
+    from fuzzy_string_matching import fuzzy_match
+    from llm_handler import llm_normalize
 
 
 SUPPRESS_TOKEN_FILE = None
@@ -130,6 +137,14 @@ def transcribe_audio(audio_path: str, model_path: str, device: str, compute_type
     print("主进程: 语音识别完成。")
     return result
 
+def normalize_words(all_words: list[Word], method: str = "normal") -> list[str]:
+    if method == "normal":
+        return [normalize_japanese_text(word.word) for word in all_words]
+    elif method == "llm":
+        raise llm_normalize([word.word for word in all_words])
+    else:
+        raise NotImplementedError()
+
 # ==============================================================================
 # 3. 核心匹配算法 (无变动)
 # ==============================================================================
@@ -146,7 +161,7 @@ def find_best_match_in_words(
         print("错误：目标句子标准化后为空。")
         return None
     
-    norm_words = [normalize_japanese_text(word.word) for word in all_words]
+    norm_words = normalize_words(all_words)
     sentence = ''.join(norm_words)
     # print(f"标准化的原始音频为：{sentence}")
     best_score, best_start_idx, best_end_idx = -1, -1, -1
@@ -213,60 +228,39 @@ def finalize_clip(source_path: str, start_time: float, end_time: float, output_p
 # 5. 主流程编排模块 (保留原始函数，新增批量处理函数)
 # ==============================================================================
 
-# --- 【原始函数，已保留】---
-def find_sentence_timestamps(
-    audio_path: str,
-    target_sentence: str,
-    model_path_or_size: str,
-    device: str,
-    compute_type: str,
+# --- 【辅助函数】专门用于CPU并行的句子匹配 ---
+def find_best_match_for_all_sentences(
+    all_words: List[Word],
+    target_sentences: List[str],
     confidence_threshold: int,
-    search_mode: str,
-    enable_source_separation: bool,
-    demucs_models_path: Optional[str],
-    export_transcription_path: Optional[str],
-    clip_vocals_only: bool
-) -> Optional[Dict[str, Any]]:
+    search_mode: str
+) -> List[Dict[str, Any]]:
     """
-    执行完整的查找流程，但不进行裁剪，而是返回包含所有结果的字典。
-    (注释与原始代码一致)
+    接收已转写的词语和多个目标句子，返回所有成功匹配的结果。
+    这是一个纯CPU任务，为并行处理而设计。
     """
-    # ... 函数实现与之前版本一致，此处省略以保持简洁 ...
-    if not os.path.exists(audio_path):
-        print(f"错误：音频文件未找到 -> {audio_path}")
-        return None
-    audio_for_transcription = audio_path
-    vocals_path_if_separated = None
-    if enable_source_separation:
-        vocals_path = separate_vocals(audio_path, models_path=demucs_models_path)
-        if vocals_path:
-            audio_for_transcription = vocals_path
-            vocals_path_if_separated = vocals_path
-        else:
-            print("警告: 音源分离失败，将继续使用原始音频进行识别。")
-    all_words = transcribe_audio(audio_for_transcription, model_path_or_size, device, compute_type)
+    all_results = []
     if not all_words:
-        print("任务终止：语音识别步骤未能返回有效的词语列表。")
-        return None
-    if export_transcription_path:
-        # ...
-        pass
-    match_result = find_best_match_in_words(all_words, target_sentence, search_mode, confidence_threshold)
-    if not match_result:
-        print("任务终止：文本匹配步骤未能找到匹配项。")
-        return None
-    final_clip_source_path = audio_path
-    if clip_vocals_only and vocals_path_if_separated:
-        final_clip_source_path = vocals_path_if_separated
-    return {
-        "start_time": match_result['start_timestamp'],
-        "end_time": match_result['end_timestamp'],
-        "clip_source_path": final_clip_source_path,
-        "score": match_result.get('score', 0)
-    }
+        return []
+        
+    for i, sentence in enumerate(target_sentences):
+        match_result = find_best_match_in_words(
+            all_words=all_words,
+            target_sentence=sentence,
+            search_mode=search_mode,
+            confidence_threshold=confidence_threshold
+        )
+        if match_result:
+            all_results.append({
+                "id": f"clip-{i}-{sentence[:10]}",
+                "sentence": sentence,
+                "predicted_start": round(match_result['start_timestamp'], 3),
+                "predicted_end": round(match_result['end_timestamp'], 3),
+                "score": match_result['score']
+            })
+    return all_results
 
-
-# --- 【新增函数】智能批量处理主流程 ---
+# --- 【主函数】智能批量处理主流程 ---
 def find_multiple_sentences_timestamps(
     audio_path: str,
     target_sentences: List[str],
@@ -309,63 +303,64 @@ def find_multiple_sentences_timestamps(
     all_words = transcribe_audio(audio_for_transcription, model_path_or_size, device, compute_type)
     if not all_words:
         update_progress("错误: 语音识别步骤未能返回有效的词语列表。任务终止。")
-        return None
-    update_progress("步骤 3/3: 正在匹配所有句子...")
-    all_results = []
-    total_sentences = len(target_sentences)
-    for i, sentence in enumerate(target_sentences):
-        update_progress(f"正在匹配 ({i+1}/{total_sentences}): {sentence[:25]}...")
-        match_result = find_best_match_in_words(
-            all_words=all_words,
-            target_sentence=sentence,
-            search_mode=search_mode,
-            confidence_threshold=confidence_threshold
-        )
-        if match_result:
-            # ==========================================================
-            # === 核心修改：将时间戳四舍五入到三位小数 ===
-            # ==========================================================
-            all_results.append({
-                "id": f"clip-{i}",
-                "sentence": sentence,
-                "predicted_start": round(match_result['start_timestamp'], 3),
-                "predicted_end": round(match_result['end_timestamp'], 3),
-                "score": match_result['score']
-            })
-            # ==========================================================
-    if not all_results:
-        update_progress("处理完成，但未能找到任何可信的匹配项。")
-    else:
-        update_progress(f"处理完成，成功匹配 {len(all_results)}/{total_sentences} 个句子。")
+        # --- 核心修改1: 即使转写失败，也返回一个结构，让生产者可以处理 ---
+        return {
+            "all_words": None,
+            "clip_source_path": None
+        }
+
     final_clip_source_path = audio_path
     if clip_vocals_only and vocals_path_if_separated:
         final_clip_source_path = vocals_path_if_separated
         print(f"最终裁剪将使用分离出的人声音轨: {final_clip_source_path}")
     else:
         print(f"最终裁剪将使用原始文件: {final_clip_source_path}")
+
+    # --- 核心修改2: 根据 target_sentences 是否为空来决定行为 ---
+    if not target_sentences:
+        # 模式A: 仅转写 (生产者)
+        update_progress("转写完成，准备进行匹配。")
+        return {
+            "all_words": all_words,
+            "clip_source_path": final_clip_source_path
+        }
+    
+    # 模式B: 完整流程 (用于旧的串行模式或直接测试)
+    update_progress("步骤 3/3: 正在匹配所有句子...")
+    all_results = find_best_match_for_all_sentences(
+        all_words=all_words,
+        target_sentences=target_sentences,
+        confidence_threshold=confidence_threshold,
+        search_mode=search_mode
+    )
+    update_progress(f"处理完成，成功匹配 {len(all_results)}/{len(target_sentences)} 个句子。")
+
     return {
         "clip_source_path": final_clip_source_path,
         "clips": all_results
     }
 
 # ==============================================================================
-# 6. 主程序入口 (无变动)
+# 6. 主程序入口 (核心修改处)
 # ==============================================================================
 if __name__ == "__main__":
     # 确保在 Windows 或 macOS 上，multiprocessing 的 'spawn' 或 'forkserver' 模式正常工作
     multiprocessing.freeze_support()
     
     # --- 配置任务 (直接运行时使用) ---
-    
-    INPUT_AUDIO_PATH = r"D:\program\Python\auto-workflows\stt\stt-test\pjsk-test.mp4"
-    TARGET_SENTENCE = "スコア忘れないようにしないと"
-    OUTPUT_AUDIO_PATH = "clipped_sentence.wav"
+    INPUT_AUDIO_PATH = "D:/program/Python/auto-workflows/stt/stt-test/pjsk-test.mp4"
+    # --- 修改为测试批量句子 ---
+    TARGET_SENTENCES = [
+        "スコア忘れないようにしないと",
+        "今日は、放課後みんなで練習する日だから",
+        "この前のライブ、すっごく盛り上がったよね"
+    ]
+    OUTPUT_DIR = "test_output_clips"
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
 
     ENABLE_SOURCE_SEPARATION = True
     DEMUCS_MODELS_PATH = None
     CLIP_VOCALS_ONLY = False
-    EXPORT_TRANSCRIPTION_FILE = True
-    TRANSCRIPTION_OUTPUT_PATH = "full_transcription.txt"
 
     MODEL_PATH_OR_SIZE = "D:/ACGN/gal/whisper/models/faster-whisper-medium"
     DEVICE = "cuda"
@@ -373,14 +368,14 @@ if __name__ == "__main__":
     SEARCH_MODE = 'exhaustive'
     CONFIDENCE_THRESHOLD = 75
 
-    print("--- 开始执行直接裁剪任务 (已启用多进程模式) ---")
+    print("--- 开始执行批量处理测试 (串行模式) ---")
     if not os.path.exists(INPUT_AUDIO_PATH):
         print(f"错误: 输入文件 '{INPUT_AUDIO_PATH}' 不存在。请检查路径。")
     else:
-        # 1. 调用主流程函数获取 AI 预测的时间戳和裁剪源
-        result = find_sentence_timestamps(
+        # 1. 调用主流程函数获取所有匹配结果
+        results_data = find_multiple_sentences_timestamps(
             audio_path=INPUT_AUDIO_PATH,
-            target_sentence=TARGET_SENTENCE,
+            target_sentences=TARGET_SENTENCES,
             model_path_or_size=MODEL_PATH_OR_SIZE,
             device=DEVICE,
             compute_type=COMPUTE_TYPE,
@@ -388,18 +383,23 @@ if __name__ == "__main__":
             confidence_threshold=CONFIDENCE_THRESHOLD,
             enable_source_separation=ENABLE_SOURCE_SEPARATION,
             demucs_models_path=DEMUCS_MODELS_PATH,
-            export_transcription_path=TRANSCRIPTION_OUTPUT_PATH if EXPORT_TRANSCRIPTION_FILE else None,
             clip_vocals_only=CLIP_VOCALS_ONLY
         )
         
-        # 2. 如果成功找到，立即执行裁剪
-        if result:
-            print("\n--- AI 预测成功，立即执行裁剪 ---")
-            finalize_clip(
-                source_path=result["clip_source_path"],
-                start_time=result["start_time"],
-                end_time=result["end_time"],
-                output_path=OUTPUT_AUDIO_PATH
-            )
+        # 2. 如果成功找到，对每个结果执行裁剪
+        if results_data and results_data.get("clips"):
+            print(f"\n--- AI 预测成功，共找到 {len(results_data['clips'])} 个匹配项，开始逐一裁剪 ---")
+            for i, clip_info in enumerate(results_data['clips']):
+                print(f"\n--- 正在裁剪第 {i+1} 个片段 ---")
+                print(f"句子: {clip_info['sentence']}")
+                output_filename = f"clip_{i}_{re.sub('[^ぁ-んァ-ン一-龥]', '', clip_info['sentence'][:10])}.wav"
+                output_path = os.path.join(OUTPUT_DIR, output_filename)
+                
+                finalize_clip(
+                    source_path=results_data["clip_source_path"],
+                    start_time=clip_info["predicted_start"],
+                    end_time=clip_info["predicted_end"],
+                    output_path=output_path
+                )
         else:
             print("\n--- 任务结束，未能找到匹配项或发生错误，未执行裁剪。 ---")

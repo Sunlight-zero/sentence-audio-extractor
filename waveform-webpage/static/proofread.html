@@ -3,23 +3,23 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>步骤 2: 校对与打包</title>
+    <title>步骤 2: 校对与上传</title>
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="proofread.css">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </head>
 <body>
     <div class="container">
-        <h1>AI 音频校对与打包</h1>
+        <h1>AI 音频校对与上传</h1>
 
         <div id="statusDisplay" class="status-info">正在加载数据...</div>
 
         <div id="manual-upload-card" class="task-form hidden">
              <h2>手动加载文件</h2>
-             <p>未检测到自动传入的文件或加载失败。请手动上传视频和处理后生成的 JSON 文件。</p>
+             <p>未检测到自动传入的文件或加载失败。请手动上传一个或多个视频/音频文件和处理后生成的 JSON 文件。</p>
              <div class="form-group">
-                 <label for="manualVideoFile">选择视频/音频文件</label>
-                 <input type="file" id="manualVideoFile" accept="video/*,audio/*">
+                 <label for="manualVideoFiles">选择视频/音频文件 (可多选)</label>
+                 <input type="file" id="manualVideoFiles" accept="video/*,audio/*" multiple>
              </div>
              <div class="form-group">
                  <label for="manualJsonFile">选择 JSON 结果文件</label>
@@ -33,7 +33,7 @@
             <h2>选择要校对的句子</h2>
             <div id="sentence-list">
                     <!-- JS动态填充 -->
-                </div>
+            </div>
         </div>
 
         <div id="corrector-ui" class="hidden">
@@ -59,9 +59,13 @@
         </div>
         
         <div id="package-container" class="hidden">
-            <h2>完成并打包</h2>
-            <p>当所有需要的句子都校对并确认为 "✔ 已确认" 后，点击下方按钮生成包含所有音频和映射文件的 ZIP 压缩包。</p>
-            <button id="package-btn" class="button">📦 生成并下载 ZIP (0 个文件)</button>
+            <h2>完成并上传</h2>
+            <p>当所有需要的句子都校对并确认为 "✔ 已确认" 后，点击下方按钮将音频直接上传到 Anki，或选择打包下载。</p>
+            <!-- --- 新增/修改 按钮 --- -->
+            <div class="final-actions">
+                <button id="upload-anki-btn" class="button button-primary">🚀 上传至 Anki (0 个文件)</button>
+                <button id="package-btn" class="button button-secondary">📦 生成并下载 ZIP (0 个文件)</button>
+            </div>
         </div>
     </div>
 

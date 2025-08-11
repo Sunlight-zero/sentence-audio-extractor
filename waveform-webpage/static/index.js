@@ -10,68 +10,82 @@ document.addEventListener('DOMContentLoaded', () => {
     const downloadJsonBtn = document.getElementById('download-json-btn');
     const proofreadLinkBtn = document.getElementById('proofread-link-btn');
     
-    // 【新增功能】获取句子输入框和文件选择框
     const sentenceTextarea = document.getElementById('sentence');
     const sentenceFileInput = document.getElementById('sentenceFile');
 
-    // --- 诊断日志 ---
-    if (!form) {
-        console.error("错误：无法找到 ID 为 'upload-form' 的表单元素。请检查 index.html。");
-        return;
-    }
-    if (!submitBtn) {
-        console.error("错误：无法找到 ID 为 'submit-btn' 的按钮元素。");
-        return;
-    }
-    console.log("成功获取到表单和按钮元素。", { form, submitBtn });
+    // --- 新增元素获取 ---
+    const getAnkiBtn = document.getElementById('get-anki-btn');
+    const deckNameInput = document.getElementById('deck-name');
+    const videoFilesInput = document.getElementById('videoFiles'); // 获取新的多文件输入框
 
     let pollInterval;
 
-    // 【新增功能】监听文件选择框的变化事件
+    // --- 新增功能: 从 Anki 获取句子 ---
+    if (getAnkiBtn) {
+        getAnkiBtn.addEventListener('click', async () => {
+            const deckName = deckNameInput.value.trim() || 'luna temporary';
+            statusContainer.style.display = 'block';
+            statusMessage.textContent = `正在从 Anki 牌组 '${deckName}' 获取句子...`;
+            getAnkiBtn.disabled = true;
+
+            try {
+                const response = await fetch(`/api/anki/sentences?deck=${encodeURIComponent(deckName)}`);
+                const data = await response.json();
+
+                if (!response.ok || !data.success) {
+                    throw new Error(data.error || `服务器错误，状态码: ${response.status}`);
+                }
+                
+                sentenceTextarea.value = data.sentences;
+                statusMessage.textContent = data.message || '句子获取成功！';
+
+            } catch (error) {
+                console.error('从 Anki 获取句子时出错:', error);
+                statusMessage.textContent = `错误: ${error.message}`;
+            } finally {
+                getAnkiBtn.disabled = false;
+            }
+        });
+    }
+
+    // --- 监听文件选择框的变化事件 (无变动) ---
     if (sentenceFileInput && sentenceTextarea) {
         sentenceFileInput.addEventListener('change', (event) => {
             const file = event.target.files[0];
-            if (!file) {
-                return; // 如果用户取消选择，则不执行任何操作
-            }
-
-            // 使用 FileReader API 来读取文件内容
+            if (!file) return;
             const reader = new FileReader();
-            
-            // 定义文件成功读取后的回调函数
             reader.onload = (e) => {
-                const fileContent = e.target.result;
-                // 将文件内容设置到 textarea 中
-                sentenceTextarea.value = fileContent;
-                console.log(`成功加载文件 ${file.name} 的内容到文本框。`);
+                sentenceTextarea.value = e.target.result;
             };
-
-            // 定义文件读取失败的回调函数
             reader.onerror = (e) => {
                 console.error("读取文件时出错:", e);
                 alert("读取文件时发生错误。");
             };
-
-            // 以 UTF-8 编码读取文件内容
             reader.readAsText(file, 'UTF-8');
         });
     }
 
-
-    // --- 核心事件监听 (无变动) ---
+    // --- 核心事件监听 (修改以支持多文件) ---
     form.addEventListener('submit', async (e) => {
-        e.preventDefault(); // 阻止表单默认的提交刷新行为
+        e.preventDefault();
         console.log("表单提交事件被触发。");
 
-        // 禁用按钮并显示加载状态
         submitBtn.disabled = true;
         submitBtn.textContent = '正在上传...';
         resultContainer.style.display = 'none';
         statusContainer.style.display = 'block';
         statusMessage.textContent = '文件上传中，请稍候...';
 
+        // --- 修改: 直接使用 FormData，它能自动处理多文件 ---
         const formData = new FormData(form);
-        console.log("已创建 FormData:", formData);
+        // 验证是否选择了文件
+        if (!formData.has('videoFiles') || !videoFilesInput.files.length) {
+            statusMessage.textContent = '错误: 请至少选择一个视频文件。';
+            submitBtn.disabled = false;
+            submitBtn.textContent = '开始处理';
+            return;
+        }
+        console.log("已创建 FormData，包含多个文件。");
 
         try {
             console.log("准备发送 fetch 请求到 /process...");
@@ -81,18 +95,15 @@ document.addEventListener('DOMContentLoaded', () => {
             });
             
             console.log("收到来自服务器的响应:", response);
-
             const data = await response.json();
 
             if (!response.ok) {
-                // 如果服务器返回错误 (如 400, 500), 抛出错误
                 throw new Error(data.error || `服务器错误，状态码: ${response.status}`);
             }
             
             if (data.status === 'processing' && data.task_id) {
                 submitBtn.textContent = '处理中...';
                 statusMessage.textContent = '文件上传成功，后台正在处理...';
-                // 开始轮询任务状态
                 pollStatus(data.task_id);
             } else {
                 throw new Error(data.error || '未能从服务器获取有效的任务ID。');
@@ -112,29 +123,32 @@ document.addEventListener('DOMContentLoaded', () => {
             try {
                 const res = await fetch(`/task_status/${taskId}`);
                 if (!res.ok) {
-                    // 不清除轮询，因为可能是暂时的网络问题
                     console.warn(`无法连接服务器检查状态，状态码: ${res.status}。将在3秒后重试。`);
                     return;
                 }
                 const data = await res.json();
-
-                // 实时更新状态消息
                 statusMessage.textContent = data.message || data.error || `当前状态: ${data.status}`;
 
                 if (data.status === 'completed') {
                     console.log("任务完成！", data);
                     clearInterval(pollInterval);
-                    statusContainer.style.display = 'none';
-                    resultContainer.style.display = 'block';
                     
-                    // 设置下载和跳转链接
-                    downloadJsonBtn.href = data.result_json_url;
-                    downloadJsonBtn.download = data.result_json_url.split('/').pop();
+                    if (data.result_json_url) {
+                        statusContainer.style.display = 'none';
+                        resultContainer.style.display = 'block';
+                        
+                        downloadJsonBtn.href = data.result_json_url;
+                        downloadJsonBtn.download = data.result_json_url.split('/').pop();
 
-                    const proofreadUrl = `/proofread?video_url=${encodeURIComponent(data.video_url)}&json_url=${encodeURIComponent(data.result_json_url)}`;
-                    proofreadLinkBtn.href = proofreadUrl;
+                        // --- 修改: 不再传递 video_url，因为它现在是动态的 ---
+                        const proofreadUrl = `/proofread?json_url=${encodeURIComponent(data.result_json_url)}`;
+                        proofreadLinkBtn.href = proofreadUrl;
+                    } else {
+                        // 处理没有匹配结果的情况
+                        statusContainer.style.display = 'block'; // 保持状态信息可见
+                        resultContainer.style.display = 'none';
+                    }
 
-                    // 恢复按钮状态
                     submitBtn.disabled = false;
                     submitBtn.textContent = '开始处理';
 
@@ -145,7 +159,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     submitBtn.disabled = false;
                     submitBtn.textContent = '重新处理';
                 }
-                // 如果状态是 'processing'，则不执行任何操作，继续轮询
             } catch (error) {
                 console.error('轮询状态时发生严重错误:', error);
                 statusMessage.textContent = `轮询错误: ${error.message}。已停止轮询。`;
@@ -153,6 +166,6 @@ document.addEventListener('DOMContentLoaded', () => {
                 submitBtn.disabled = false;
                 submitBtn.textContent = '重新处理';
             }
-        }, 3000); // 每3秒查询一次状态
+        }, 3000);
     }
 });
