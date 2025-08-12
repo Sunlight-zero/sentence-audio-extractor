@@ -7,6 +7,10 @@ from flask import Flask, jsonify, request, send_from_directory, url_for
 from werkzeug.utils import secure_filename
 from waitress import serve
 import threading
+# --- 【新增】导入并行处理所需的库 ---
+import queue
+import concurrent.futures
+from typing import List, Dict, Set, Any, Tuple
 
 # 确保 utils 目录在 Python 路径中
 import utils.sentence_matching as sm
@@ -183,13 +187,10 @@ def serve_output(filename):
 # ==============================================================================
 # 后台任务函数 (核心修改处)
 # ==============================================================================
-def run_processing_task(task_id, video_paths, sentences, enable_separation):
-    """在后台线程中运行的完整处理流程，实现“找到即删除”逻辑。"""
+def run_processing_task(task_id: str, video_paths: List[str], sentences: List[str], enable_separation: bool) -> None:
+    """使用生产者-消费者模型实现GPU串行，CPU并行的处理流程。"""
     try:
-        def progress_callback(message):
-            if task_id in tasks:
-                tasks[task_id]["message"] = message
-        
+        # --- 1. 初始化共享资源 ---
         sentence_map_path = os.path.join(app.config['SENTENCES_FOLDER'], 'anki_sentences.json')
         sentence_to_note_id = {}
         if os.path.exists(sentence_map_path):
@@ -197,54 +198,99 @@ def run_processing_task(task_id, video_paths, sentences, enable_separation):
                 id_to_sentence = json.load(f)
                 sentence_to_note_id = {v: k for k, v in id_to_sentence.items()}
         
-        # --- 核心修改 1: 使用 set 来存储待处理的句子，方便高效移除 ---
-        remaining_sentences = set(sentences)
-        all_clips_results = []
-        total_videos = len(video_paths)
+        task_queue: queue.Queue = queue.Queue(maxsize=os.cpu_count() or 1)
+        remaining_sentences: Set[str] = set(sentences)
+        all_clips_results: List[Dict[str, Any]] = []
+        lock = threading.Lock()
+        
+        # --- 2. 定义消费者工作函数 (嵌套定义以保持封装) ---
+        def cpu_consumer_worker() -> None:
+            """消费者线程: 并行执行CPU密集型任务 (句子匹配)。"""
+            while True:
+                task_item = task_queue.get()
+                if task_item is None: # 收到 "毒丸"
+                    break
+                
+                video_path, all_words, clip_source_path = task_item
+                original_filename = os.path.basename(video_path)
+                
+                with lock:
+                    if not remaining_sentences:
+                        task_queue.task_done()
+                        continue
+                    sentences_to_find = list(remaining_sentences)
+                
+                tasks[task_id]["message"] = f"[匹配中] {original_filename} (剩余 {len(sentences_to_find)} 句)"
+                
+                match_results = sm.find_best_match_for_all_sentences(
+                    all_words=all_words, 
+                    target_sentences=sentences_to_find,
+                    confidence_threshold=70, 
+                    search_mode='exhaustive'
+                )
 
-        for i, video_path in enumerate(video_paths, 1):
-            # --- 核心修改 2: 如果所有句子都找到了，就提前结束循环 ---
-            if not remaining_sentences:
-                progress_callback("所有句子都已找到匹配项，提前结束处理。")
-                break
+                if match_results:
+                    found_in_this_video: Set[str] = set()
+                    with lock:
+                        for clip in match_results:
+                            sentence = clip['sentence']
+                            if sentence in remaining_sentences:
+                                clip['clip_source_path'] = clip_source_path
+                                clip['original_video_filename'] = original_filename
+                                clip['video_url'] = f"/uploads/{original_filename}"
+                                clip['note_id'] = sentence_to_note_id.get(sentence)
+                                all_clips_results.append(clip)
+                                found_in_this_video.add(sentence)
+                        
+                        if found_in_this_video:
+                            remaining_sentences -= found_in_this_video
+                            
+                task_queue.task_done()
 
-            original_filename = os.path.basename(video_path)
-            progress_callback(f"处理视频 {i}/{total_videos}: {original_filename} (待匹配: {len(remaining_sentences)}句)")
+        # --- 3. 启动消费者线程池 ---
+        num_consumers = os.cpu_count() or 2
+        consumer_threads = [threading.Thread(target=cpu_consumer_worker, daemon=True) for _ in range(num_consumers)]
+        for t in consumer_threads:
+            t.start()
+
+        # --- 4. 主线程作为生产者，串行执行GPU任务 ---
+        for i, video_path in enumerate(video_paths):
+            with lock:
+                if not remaining_sentences:
+                    tasks[task_id]["message"] = "所有句子已找到，提前结束转写。"
+                    break
             
-            # --- 核心修改 3: 只把“待处理”的句子传递给匹配函数 ---
+            original_filename = os.path.basename(video_path)
+            def progress_callback(message: str) -> None:
+                tasks[task_id]["message"] = f"[转写 {i+1}/{len(video_paths)}] {original_filename}: {message}"
+
+            # 调用 sentence_matching 只进行转写
             results_data = sm.find_multiple_sentences_timestamps(
                 audio_path=video_path,
-                target_sentences=list(remaining_sentences), # 将 set 转换为 list
+                target_sentences=[], # 传入空列表，仅执行转写
                 model_path_or_size="medium",
                 device="cuda",
                 compute_type="float16",
-                confidence_threshold=70,
-                search_mode='exhaustive',
+                confidence_threshold=70, # 此处无用，但需占位
+                search_mode='exhaustive', # 此处无用，但需占位
                 enable_source_separation=enable_separation,
                 clip_vocals_only=False,
-                progress_callback=lambda msg: progress_callback(f"[视频 {i}/{total_videos}] {msg}")
+                progress_callback=progress_callback
             )
             
-            if results_data and results_data.get('clips'):
-                clip_source_path = results_data.get('clip_source_path')
-                found_in_this_video = set()
+            if results_data and results_data.get('all_words'):
+                task_queue.put((video_path, results_data['all_words'], results_data['clip_source_path']))
+            else:
+                print(f"警告: 视频 {original_filename} 转写失败或未返回词语，已跳过。")
+        
+        # --- 5. 等待所有任务完成 ---
+        task_queue.join() # 等待队列中的所有任务都被消费者处理
+        for _ in range(num_consumers):
+            task_queue.put(None) # 发送 "毒丸"
+        for t in consumer_threads:
+            t.join() # 等待所有消费者线程退出
 
-                for clip in results_data.get('clips', []):
-                    clip['clip_source_path'] = clip_source_path
-                    clip['original_video_filename'] = original_filename
-                    clip['video_url'] = f"/uploads/{original_filename}"
-                    clip['note_id'] = sentence_to_note_id.get(clip['sentence'])
-                    all_clips_results.append(clip)
-                    
-                    # --- 核心修改 4: 记录下本次找到的句子 ---
-                    found_in_this_video.add(clip['sentence'])
-                
-                # --- 核心修改 5: 从待处理集合中，移除本次已经找到的句子 ---
-                if found_in_this_video:
-                    remaining_sentences -= found_in_this_video
-                    progress_callback(f"视频 {original_filename} 中新找到 {len(found_in_this_video)} 句。")
-
-
+        # --- 6. 整理并保存最终结果 ---
         if not all_clips_results:
             tasks[task_id] = {"status": "completed", "message": "处理完成，但未能从任何视频中匹配到任何句子。", "result_json_url": None}
             return
@@ -253,7 +299,7 @@ def run_processing_task(task_id, video_paths, sentences, enable_separation):
         json_path = os.path.join(app.config['RESULTS_FOLDER'], json_filename)
         
         final_json_data = {
-            "clips": all_clips_results
+            "clips": sorted(all_clips_results, key=lambda x: x.get('score', 0), reverse=True)
         }
 
         with open(json_path, 'w', encoding='utf-8') as f:
@@ -261,7 +307,7 @@ def run_processing_task(task_id, video_paths, sentences, enable_separation):
 
         tasks[task_id] = {
             "status": "completed",
-            "message": f"处理完成！从 {total_videos} 个视频中总共匹配到 {len(all_clips_results)} 个句子。",
+            "message": f"处理完成！总共匹配到 {len(all_clips_results)} 个句子。",
             "result_json_url": f"/results/{json_filename}",
         }
 

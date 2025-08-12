@@ -30,7 +30,7 @@ except ImportError:
 SUPPRESS_TOKEN_FILE = None
 
 # ==============================================================================
-# 1. 文本标准化模块 (无变动)
+# 1. 文本标准化模块 (有修改)
 # ==============================================================================
 def normalize_japanese_text(text: str) -> str:
     """标准化日文文本为纯平假名。"""
@@ -40,6 +40,16 @@ def normalize_japanese_text(text: str) -> str:
     normalized_text = mojimoji.zen_to_han(hiragana_text, kana=False)
     cleaned_text = re.sub(r'[^ぁ-ん]', '', normalized_text)
     return cleaned_text
+
+def normalize_text_llm(text: str) -> str:
+    """使用 LLM 标准化单个日文文本，失败则回退。"""
+    try:
+        # llm_normalize 需要列表并返回列表
+        normalized_list = llm_normalize([text])
+        return normalized_list[0]
+    except Exception as e:
+        print(f"LLM 标准化失败，回退到传统方法: {e}")
+        return normalize_japanese_text(text)
 
 # ==============================================================================
 # 2. 音源分离与语音识别模块 (使用多进程隔离资源)
@@ -137,16 +147,23 @@ def transcribe_audio(audio_path: str, model_path: str, device: str, compute_type
     print("主进程: 语音识别完成。")
     return result
 
-def normalize_words(all_words: list[Word], method: str = "normal") -> list[str]:
+def normalize_words(all_words: list[Word], method: str = "llm") -> list[str]:
     if method == "normal":
+        print("使用传统方法进行标准化...")
         return [normalize_japanese_text(word.word) for word in all_words]
     elif method == "llm":
-        raise llm_normalize([word.word for word in all_words])
+        print("使用 LLM 进行标准化...")
+        try:
+            # llm_normalize 负责批量处理
+            return llm_normalize([word.word for word in all_words])
+        except Exception as e:
+            print(f"LLM 批量标准化失败，回退到传统逐词标准化方法: {e}")
+            return [normalize_japanese_text(word.word) for word in all_words]
     else:
         raise NotImplementedError()
 
 # ==============================================================================
-# 3. 核心匹配算法 (无变动)
+# 3. 核心匹配算法 (有修改)
 # ==============================================================================
 def find_best_match_in_words(
     all_words: List[Word],
@@ -156,12 +173,12 @@ def find_best_match_in_words(
 ) -> Optional[Dict[str, Any]]:
     """在已转写的词语列表中，为单个句子查找最匹配的序列。"""
     print(f"\n--- 正在匹配句子: '{target_sentence[:30]}...' ---")
-    norm_target = normalize_japanese_text(target_sentence)
+    norm_target = normalize_text_llm(target_sentence)
     if not norm_target:
         print("错误：目标句子标准化后为空。")
         return None
     
-    norm_words = normalize_words(all_words)
+    norm_words = normalize_words(all_words, method="llm")
     sentence = ''.join(norm_words)
     # print(f"标准化的原始音频为：{sentence}")
     best_score, best_start_idx, best_end_idx = -1, -1, -1
