@@ -21,12 +21,12 @@ import utils.anki_handler as anki
 # --- Flask 应用初始化与目录配置 ---
 app = Flask(__name__, static_folder='static', static_url_path='')
 APP_ROOT = os.path.dirname(os.path.abspath(__file__))
-UPLOAD_FOLDER = os.path.join(APP_ROOT, 'uploads')
-RESULTS_FOLDER = os.path.join(APP_ROOT, 'results')
-OUTPUT_FOLDER = os.path.join(APP_ROOT, 'output')
+UPLOAD_FOLDER = os.path.join(APP_ROOT, 'tmp/uploads')
+RESULTS_FOLDER = os.path.join(APP_ROOT, 'tmp/results')
+OUTPUT_FOLDER = os.path.join(APP_ROOT, 'tmp/output')
 # --- 新增 ---
 # SENTENCES_FOLDER 用于存放从 Anki 拉取的句子和 ID 映射
-SENTENCES_FOLDER = os.path.join(APP_ROOT, 'sentences')
+SENTENCES_FOLDER = os.path.join(APP_ROOT, 'tmp/sentences')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(RESULTS_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
@@ -76,7 +76,6 @@ def get_anki_sentences():
 @app.route('/process', methods=['POST'])
 def process_videos():
     """接收一个或多个视频和多个句子，启动后台批量分析任务。"""
-    # --- 修改: 使用 getlist 处理多个文件 ---
     video_files = request.files.getlist('videoFiles')
     if not video_files or all(f.filename == '' for f in video_files):
         return jsonify({"error": "缺少视频文件或未选择文件。"}), 400
@@ -98,7 +97,6 @@ def process_videos():
     task_id = str(uuid.uuid4())
     tasks[task_id] = {"status": "processing", "message": "任务已开始，正在初始化..."}
 
-    # --- 修改: 将 video_paths (列表) 传递给后台线程 ---
     thread = threading.Thread(target=run_processing_task, args=(task_id, video_paths, sentences, enable_separation))
     thread.start()
 
@@ -160,8 +158,6 @@ def upload_to_anki():
         if not clips_to_upload:
             return jsonify({"success": False, "error": "没有提供可上传的片段。"}), 400
         
-        # 这里可以启动一个新线程来执行上传，避免长时间阻塞请求
-        # 但为简单起见，我们先同步执行
         anki.upload_clips_to_anki(clips_to_upload)
         
         return jsonify({"success": True, "message": "上传任务已成功提交到 Anki。"})
@@ -190,7 +186,7 @@ def serve_output(filename):
 def run_processing_task(task_id: str, video_paths: List[str], sentences: List[str], enable_separation: bool) -> None:
     """使用生产者-消费者模型实现GPU串行，CPU并行的处理流程。"""
     try:
-        # --- 1. 初始化共享资源 ---
+        # --- 1. 初始化与预处理 ---
         sentence_map_path = os.path.join(app.config['SENTENCES_FOLDER'], 'anki_sentences.json')
         sentence_to_note_id = {}
         if os.path.exists(sentence_map_path):
@@ -198,53 +194,59 @@ def run_processing_task(task_id: str, video_paths: List[str], sentences: List[st
                 id_to_sentence = json.load(f)
                 sentence_to_note_id = {v: k for k, v in id_to_sentence.items()}
         
+        # --- 【核心修改】一次性标准化所有目标句子 ---
+        tasks[task_id]["message"] = f"正在批量标准化 {len(sentences)} 个目标句子..."
+        norm_sentences_map = sm.batch_normalize_texts(sentences)
+        # 语音转写完成，等待 LLM 匹配
+        llm_queue = queue.Queue()
+        # 标准化完成、等待匹配的任务队列
         task_queue: queue.Queue = queue.Queue(maxsize=os.cpu_count() or 1)
-        remaining_sentences: Set[str] = set(sentences)
+        # 使用标准化的句子映射作为待办事项列表
+        remaining_sentences_map = norm_sentences_map.copy()
         all_clips_results: List[Dict[str, Any]] = []
         lock = threading.Lock()
         
-        # --- 2. 定义消费者工作函数 (嵌套定义以保持封装) ---
+        # --- 2. 定义消费者工作函数 ---
+        # 这个函数负责字符串模糊匹配
         def cpu_consumer_worker() -> None:
             """消费者线程: 并行执行CPU密集型任务 (句子匹配)。"""
             while True:
                 task_item = task_queue.get()
-                if task_item is None: # 收到 "毒丸"
+                if task_item is None:
                     break
                 
-                video_path, all_words, clip_source_path = task_item
+                video_path, all_words, norm_words, clip_source_path = task_item
                 original_filename = os.path.basename(video_path)
                 
                 with lock:
-                    if not remaining_sentences:
+                    if not remaining_sentences_map:
                         task_queue.task_done()
                         continue
-                    sentences_to_find = list(remaining_sentences)
+                    # 传递当前剩余的句子进行匹配
+                    current_sentences_to_find = remaining_sentences_map.copy()
                 
-                tasks[task_id]["message"] = f"[匹配中] {original_filename} (剩余 {len(sentences_to_find)} 句)"
+                tasks[task_id]["message"] = f"[匹配中] {original_filename} (剩余 {len(current_sentences_to_find)} 句)"
                 
                 match_results = sm.find_best_match_for_all_sentences(
-                    all_words=all_words, 
-                    target_sentences=sentences_to_find,
+                    all_words=all_words,
+                    norm_words=norm_words,
+                    target_sentences_map=current_sentences_to_find,
                     confidence_threshold=70, 
                     search_mode='exhaustive'
                 )
 
                 if match_results:
-                    found_in_this_video: Set[str] = set()
                     with lock:
                         for clip in match_results:
                             sentence = clip['sentence']
-                            if sentence in remaining_sentences:
+                            # 如果匹配到的句子仍在待办列表中，则处理并移除
+                            if sentence in remaining_sentences_map:
                                 clip['clip_source_path'] = clip_source_path
                                 clip['original_video_filename'] = original_filename
                                 clip['video_url'] = f"/uploads/{original_filename}"
                                 clip['note_id'] = sentence_to_note_id.get(sentence)
                                 all_clips_results.append(clip)
-                                found_in_this_video.add(sentence)
-                        
-                        if found_in_this_video:
-                            remaining_sentences -= found_in_this_video
-                            
+                                del remaining_sentences_map[sentence]
                 task_queue.task_done()
 
         # --- 3. 启动消费者线程池 ---
@@ -256,7 +258,7 @@ def run_processing_task(task_id: str, video_paths: List[str], sentences: List[st
         # --- 4. 主线程作为生产者，串行执行GPU任务 ---
         for i, video_path in enumerate(video_paths):
             with lock:
-                if not remaining_sentences:
+                if not remaining_sentences_map:
                     tasks[task_id]["message"] = "所有句子已找到，提前结束转写。"
                     break
             
@@ -264,31 +266,35 @@ def run_processing_task(task_id: str, video_paths: List[str], sentences: List[st
             def progress_callback(message: str) -> None:
                 tasks[task_id]["message"] = f"[转写 {i+1}/{len(video_paths)}] {original_filename}: {message}"
 
-            # 调用 sentence_matching 只进行转写
-            results_data = sm.find_multiple_sentences_timestamps(
-                audio_path=video_path,
-                target_sentences=[], # 传入空列表，仅执行转写
-                model_path_or_size="medium",
+            # --- 【核心修改】调用新的、集成了标准化的转写函数 ---
+            audio_for_transcription = video_path
+            if enable_separation:
+                progress_callback("正在分离音源...")
+                vocals_path = sm.separate_vocals(video_path)
+                if vocals_path:
+                    audio_for_transcription = vocals_path
+            
+            progress_callback("正在识别与标准化转写稿...")
+            transcription_result = sm.transcribe_and_normalize_audio(
+                audio_path=audio_for_transcription,
+                model_path="medium",
                 device="cuda",
-                compute_type="float16",
-                confidence_threshold=70, # 此处无用，但需占位
-                search_mode='exhaustive', # 此处无用，但需占位
-                enable_source_separation=enable_separation,
-                clip_vocals_only=False,
-                progress_callback=progress_callback
+                compute_type="float16"
             )
             
-            if results_data and results_data.get('all_words'):
-                task_queue.put((video_path, results_data['all_words'], results_data['clip_source_path']))
+            if transcription_result:
+                all_words, norm_words = transcription_result
+                clip_source = sm.separate_vocals.vocals_path if enable_separation and sm.separate_vocals.vocals_path else video_path
+                task_queue.put((video_path, all_words, norm_words, clip_source))
             else:
                 print(f"警告: 视频 {original_filename} 转写失败或未返回词语，已跳过。")
         
         # --- 5. 等待所有任务完成 ---
-        task_queue.join() # 等待队列中的所有任务都被消费者处理
+        task_queue.join()
         for _ in range(num_consumers):
-            task_queue.put(None) # 发送 "毒丸"
+            task_queue.put(None)
         for t in consumer_threads:
-            t.join() # 等待所有消费者线程退出
+            t.join()
 
         # --- 6. 整理并保存最终结果 ---
         if not all_clips_results:

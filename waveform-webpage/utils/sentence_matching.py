@@ -6,7 +6,7 @@ import time
 import subprocess
 import sys
 import shutil
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple
 
 # --- 核心依赖 ---
 import multiprocessing
@@ -51,8 +51,23 @@ def normalize_text_llm(text: str) -> str:
         print(f"LLM 标准化失败，回退到传统方法: {e}")
         return normalize_japanese_text(text)
 
+def batch_normalize_texts(texts: List[str]) -> Dict[str, str]:
+    """
+    【新增】一次性批量标准化所有文本，并返回原文到标准化的映射字典。
+    """
+    print(f"准备使用 LLM 批量标准化 {len(texts)} 条文本...")
+    try:
+        normalized_texts = llm_normalize(texts)
+        if len(texts) != len(normalized_texts):
+             raise Exception("LLM返回的列表长度与输入不匹配")
+        return {original: normalized for original, normalized in zip(texts, normalized_texts)}
+    except Exception as e:
+        print(f"LLM 批量标准化失败，将对每个句子回退到传统方法: {e}")
+        return {text: normalize_japanese_text(text) for text in texts}
+
+
 # ==============================================================================
-# 2. 音源分离与语音识别模块 (使用多进程隔离资源)
+# 2. 音源分离与语音识别模块 (有修改)
 # ==============================================================================
 def _separate_vocals_worker(queue: multiprocessing.Queue, audio_path: str, output_dir: str, models_path: Optional[str]):
     """【子进程】执行Demucs音源分离。"""
@@ -64,7 +79,6 @@ def _separate_vocals_worker(queue: multiprocessing.Queue, audio_path: str, outpu
     if models_path:
         env['DEMUCS_MODELS'] = models_path
     try:
-        # --- 关键修改: 增加 errors='ignore' 来防止因编码问题导致的崩溃 ---
         subprocess.run(command, env=env, check=True, capture_output=True, text=True, encoding='utf-8', errors='ignore')
         base_name = os.path.splitext(os.path.basename(audio_path))[0]
         vocals_path = os.path.join(output_dir, "htdemucs", base_name, "vocals.wav")
@@ -114,27 +128,37 @@ def _transcribe_audio_worker(
         all_words = []
         print("子进程: 实时转写进度...")
         for segment in segments:
-            # 格式化时间戳为 MM:SS
             start_time_str = time.strftime('%M:%S', time.gmtime(segment.start))
-            # 打印进度
             print(f"  [{start_time_str}] {segment.text.strip()}")
-            # 收集词语以便后续处理
             if segment.words:
                 all_words.extend(segment.words)
         
-        if len(all_words) == 0:
+        if not all_words:
             raise Exception("错误：未识别出任何词语")
-        print(f"子进程: 转写完成，识别出 {len(all_words)} 个词。")
-        sentence = ''.join(word.word for word in all_words)
-        print(f"识别的句子为：{sentence}")
-        queue.put(all_words)
+
+        # --- 【核心修改】转写后立即进行一次标准化 ---
+        print("子进程: 转写完成，开始标准化转写稿...")
+        try:
+            # llm_normalize 需要一个词的列表
+            word_texts = [word.word for word in all_words]
+            normalized_word_texts = llm_normalize(word_texts)
+        except Exception as e:
+            print(f"子进程: LLM 标准化失败，回退到传统方法: {e}")
+            normalized_word_texts = [normalize_japanese_text(word.word) for word in all_words]
+
+        print("子进程: 标准化完成。")
+        queue.put((all_words, normalized_word_texts))
+
     except Exception as e:
         print(f"子进程 Whisper 错误: {e}")
         queue.put(None)
 
-def transcribe_audio(audio_path: str, model_path: str, device: str, compute_type: str) -> Optional[List[Word]]:
-    """【主进程接口】启动子进程进行语音识别。"""
-    print("\n--- 语音识别模块 ---")
+def transcribe_and_normalize_audio(audio_path: str, model_path: str, device: str, compute_type: str) -> Optional[Tuple[List[Word], List[str]]]:
+    """
+    【修改】主进程接口，启动子进程进行语音识别和标准化。
+    返回原始词对象和标准化后的词文本列表。
+    """
+    print("\n--- 语音识别与标准化模块 ---")
     ctx = multiprocessing.get_context('spawn')
     q = ctx.Queue()
     process = ctx.Process(
@@ -144,17 +168,17 @@ def transcribe_audio(audio_path: str, model_path: str, device: str, compute_type
     process.start()
     result = q.get()
     process.join()
-    print("主进程: 语音识别完成。")
+    print("主进程: 语音识别与标准化完成。")
     return result
 
 def normalize_words(all_words: list[Word], method: str = "llm") -> list[str]:
+    """【旧函数，保留但不再是主要流程】"""
     if method == "normal":
         print("使用传统方法进行标准化...")
         return [normalize_japanese_text(word.word) for word in all_words]
     elif method == "llm":
         print("使用 LLM 进行标准化...")
         try:
-            # llm_normalize 负责批量处理
             return llm_normalize([word.word for word in all_words])
         except Exception as e:
             print(f"LLM 批量标准化失败，回退到传统逐词标准化方法: {e}")
@@ -166,33 +190,29 @@ def normalize_words(all_words: list[Word], method: str = "llm") -> list[str]:
 # 3. 核心匹配算法 (有修改)
 # ==============================================================================
 def find_best_match_in_words(
+    norm_words: List[str],
+    norm_target: str,
     all_words: List[Word],
-    target_sentence: str,
     search_mode: str,
     confidence_threshold: int
 ) -> Optional[Dict[str, Any]]:
-    """在已转写的词语列表中，为单个句子查找最匹配的序列。"""
-    print(f"\n--- 正在匹配句子: '{target_sentence[:30]}...' ---")
-    norm_target = normalize_text_llm(target_sentence)
+    """
+    【修改】在已转写的词语列表中，为单个句子查找最匹配的序列。
+    此函数不再执行标准化，而是接收预标准化的文本。
+    """
     if not norm_target:
-        print("错误：目标句子标准化后为空。")
         return None
     
-    norm_words = normalize_words(all_words, method="llm")
-    sentence = ''.join(norm_words)
-    # print(f"标准化的原始音频为：{sentence}")
     best_score, best_start_idx, best_end_idx = -1, -1, -1
 
     if search_mode == 'exhaustive':
-        print("使用模式: 穷举搜索 (exhaustive)")
         for i in range(len(norm_words)):
             for j in range(i, len(norm_words)):
                 current_sequence = "".join(norm_words[i : j + 1])
                 score = fuzz.ratio(norm_target, current_sequence)
                 if score > best_score:
                     best_score, best_start_idx, best_end_idx = score, i, j
-    elif search_mode == 'efficient':  # 'efficient' mode
-        print("使用模式: 高效搜索 (efficient)")
+    elif search_mode == 'efficient':
         target_len = len(norm_target)
         min_len = max(1, int(target_len * 0.6))
         max_len = int(target_len * 1.6)
@@ -206,19 +226,12 @@ def find_best_match_in_words(
                 score = fuzz.ratio(norm_target, current_sequence)
                 if score > best_score:
                     best_score, best_start_idx, best_end_idx = score, i, j - 1
-    else: # 'levenshtein' 编辑距离模式
-        # TODO
-        # best_start_idx, best_end_idx, best_score = fuzzy_match(...)
-        pass
     
-    print(f"最高相似度得分: {best_score}")
     if best_score < confidence_threshold:
-        print(f"-> 匹配失败: 最高分 {best_score} 低于阈值 {confidence_threshold}。")
         return None
         
-    print(f"-> 匹配成功!")
     return {
-        "start_timestamp": all_words[best_start_idx].start - 0.3, # 手动往前调整
+        "start_timestamp": all_words[best_start_idx].start - 0.3,
         "end_timestamp": all_words[best_end_idx].end,
         "matched_text": "".join([w.word for w in all_words[best_start_idx:best_end_idx+1]]),
         "score": best_score
@@ -242,34 +255,35 @@ def finalize_clip(source_path: str, start_time: float, end_time: float, output_p
         return False
 
 # ==============================================================================
-# 5. 主流程编排模块 (保留原始函数，新增批量处理函数)
+# 5. 主流程编排模块 (有修改)
 # ==============================================================================
-
-# --- 【辅助函数】专门用于CPU并行的句子匹配 ---
 def find_best_match_for_all_sentences(
     all_words: List[Word],
-    target_sentences: List[str],
+    norm_words: List[str],
+    target_sentences_map: Dict[str, str],
     confidence_threshold: int,
     search_mode: str
 ) -> List[Dict[str, Any]]:
     """
-    接收已转写的词语和多个目标句子，返回所有成功匹配的结果。
-    这是一个纯CPU任务，为并行处理而设计。
+    【修改】接收预标准化的转写稿和句子映射，返回所有成功匹配的结果。
     """
     all_results = []
-    if not all_words:
+    if not all_words or not norm_words:
         return []
         
-    for i, sentence in enumerate(target_sentences):
+    print(f"开始在标准化的转写稿中匹配 {len(target_sentences_map)} 个句子...")
+    for sentence, norm_sentence in target_sentences_map.items():
         match_result = find_best_match_in_words(
+            norm_words=norm_words,
+            norm_target=norm_sentence,
             all_words=all_words,
-            target_sentence=sentence,
             search_mode=search_mode,
             confidence_threshold=confidence_threshold
         )
         if match_result:
+            print(f"  -> 成功匹配: '{sentence[:20]}...' (得分: {match_result['score']})")
             all_results.append({
-                "id": f"clip-{i}-{sentence[:10]}",
+                "id": f"clip-{sentence[:10]}",
                 "sentence": sentence,
                 "predicted_start": round(match_result['start_timestamp'], 3),
                 "predicted_end": round(match_result['end_timestamp'], 3),
@@ -277,7 +291,6 @@ def find_best_match_for_all_sentences(
             })
     return all_results
 
-# --- 【主函数】智能批量处理主流程 ---
 def find_multiple_sentences_timestamps(
     audio_path: str,
     target_sentences: List[str],
@@ -292,8 +305,7 @@ def find_multiple_sentences_timestamps(
     progress_callback: Optional[callable] = None
 ) -> Optional[Dict[str, Any]]:
     """
-    针对单个音频文件，智能处理多个目标句子。
-    (注释与之前版本一致)
+    【修改】针对单个音频文件和多个句子，执行优化的完整流程。
     """
     if not os.path.exists(audio_path):
         print(f"错误：文件未找到 -> {audio_path}")
@@ -304,49 +316,49 @@ def find_multiple_sentences_timestamps(
         if progress_callback:
             progress_callback(message)
 
-    # ... 函数实现与之前版本一致，此处省略以保持简洁 ...
     audio_for_transcription = audio_path
     vocals_path_if_separated = None
     if enable_source_separation:
-        update_progress("步骤 1/3: 正在进行音源分离 (此过程较慢)...")
+        update_progress("步骤 1/4: 正在进行音源分离...")
         vocals_path = separate_vocals(audio_path, models_path=demucs_models_path)
         if vocals_path:
             audio_for_transcription = vocals_path
             vocals_path_if_separated = vocals_path
-            update_progress("音源分离成功，将使用人声轨道进行识别。")
         else:
-            update_progress("警告: 音源分离失败，将使用原始音频进行识别。")
-    update_progress("步骤 2/3: 正在进行语音识别 (此过程较慢)...")
-    all_words = transcribe_audio(audio_for_transcription, model_path_or_size, device, compute_type)
-    if not all_words:
-        update_progress("错误: 语音识别步骤未能返回有效的词语列表。任务终止。")
-        # --- 核心修改1: 即使转写失败，也返回一个结构，让生产者可以处理 ---
-        return {
-            "all_words": None,
-            "clip_source_path": None
-        }
+            update_progress("警告: 音源分离失败，使用原始音频。")
+
+    update_progress("步骤 2/4: 正在进行语音识别与转写稿标准化...")
+    transcription_result = transcribe_and_normalize_audio(audio_for_transcription, model_path_or_size, device, compute_type)
+    if not transcription_result:
+        update_progress("错误: 语音识别步骤失败。任务终止。")
+        return {"all_words": None, "norm_words": None, "clip_source_path": None}
+    
+    all_words, norm_words = transcription_result
+    
+    update_progress("步骤 3/4: 正在批量标准化目标句子...")
+    target_sentences_map = batch_normalize_texts(target_sentences)
+    if not target_sentences_map:
+        update_progress("错误: 目标句子标准化失败。任务终止。")
+        return {"all_words": all_words, "norm_words": norm_words, "clip_source_path": None}
 
     final_clip_source_path = audio_path
     if clip_vocals_only and vocals_path_if_separated:
         final_clip_source_path = vocals_path_if_separated
-        print(f"最终裁剪将使用分离出的人声音轨: {final_clip_source_path}")
-    else:
-        print(f"最终裁剪将使用原始文件: {final_clip_source_path}")
 
-    # --- 核心修改2: 根据 target_sentences 是否为空来决定行为 ---
+    # 仅转写模式 (供 app.py 调用)
     if not target_sentences:
-        # 模式A: 仅转写 (生产者)
-        update_progress("转写完成，准备进行匹配。")
         return {
             "all_words": all_words,
+            "norm_words": norm_words,
             "clip_source_path": final_clip_source_path
         }
     
-    # 模式B: 完整流程 (用于旧的串行模式或直接测试)
-    update_progress("步骤 3/3: 正在匹配所有句子...")
+    # 完整流程模式 (供直接测试)
+    update_progress("步骤 4/4: 正在匹配所有句子...")
     all_results = find_best_match_for_all_sentences(
         all_words=all_words,
-        target_sentences=target_sentences,
+        norm_words=norm_words,
+        target_sentences_map=target_sentences_map,
         confidence_threshold=confidence_threshold,
         search_mode=search_mode
     )
@@ -357,16 +369,14 @@ def find_multiple_sentences_timestamps(
         "clips": all_results
     }
 
+
 # ==============================================================================
-# 6. 主程序入口 (核心修改处)
+# 6. 主程序入口 (无变动)
 # ==============================================================================
 if __name__ == "__main__":
-    # 确保在 Windows 或 macOS 上，multiprocessing 的 'spawn' 或 'forkserver' 模式正常工作
     multiprocessing.freeze_support()
     
-    # --- 配置任务 (直接运行时使用) ---
     INPUT_AUDIO_PATH = "D:/program/Python/auto-workflows/stt/stt-test/pjsk-test.mp4"
-    # --- 修改为测试批量句子 ---
     TARGET_SENTENCES = [
         "スコア忘れないようにしないと",
         "今日は、放課後みんなで練習する日だから",
@@ -389,7 +399,6 @@ if __name__ == "__main__":
     if not os.path.exists(INPUT_AUDIO_PATH):
         print(f"错误: 输入文件 '{INPUT_AUDIO_PATH}' 不存在。请检查路径。")
     else:
-        # 1. 调用主流程函数获取所有匹配结果
         results_data = find_multiple_sentences_timestamps(
             audio_path=INPUT_AUDIO_PATH,
             target_sentences=TARGET_SENTENCES,
@@ -403,7 +412,6 @@ if __name__ == "__main__":
             clip_vocals_only=CLIP_VOCALS_ONLY
         )
         
-        # 2. 如果成功找到，对每个结果执行裁剪
         if results_data and results_data.get("clips"):
             print(f"\n--- AI 预测成功，共找到 {len(results_data['clips'])} 个匹配项，开始逐一裁剪 ---")
             for i, clip_info in enumerate(results_data['clips']):

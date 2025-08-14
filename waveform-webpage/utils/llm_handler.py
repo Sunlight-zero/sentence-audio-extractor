@@ -3,6 +3,45 @@ import json
 import re
 from typing import Optional, Dict, List
 import pathlib
+import time
+import threading
+from collections import deque
+
+
+# --- 新增：速率限制器 ---
+class RateLimiter:
+    """
+    一个线程安全的速率限制器，用于控制API调用频率。
+    """
+    def __init__(self, max_calls: int, period_seconds: int):
+        self.max_calls = max_calls
+        self.period = period_seconds
+        self.lock = threading.Lock()
+        self.timestamps = deque()
+
+    def acquire(self):
+        """
+        获取一个调用许可。如果达到速率限制，则阻塞直到可以继续。
+        """
+        with self.lock:
+            while True:
+                current_time = time.monotonic()
+                # 移除超出时间窗口的旧时间戳
+                while self.timestamps and self.timestamps[0] <= current_time - self.period:
+                    self.timestamps.popleft()
+
+                if len(self.timestamps) < self.max_calls:
+                    self.timestamps.append(current_time)
+                    return
+                
+                # 计算需要等待的时间
+                oldest_call_time = self.timestamps[0]
+                wait_time = oldest_call_time + self.period - current_time
+                if wait_time > 0:
+                    time.sleep(wait_time)
+
+# --- 【核心修改】将速率限制调整为每 120 秒 10 次 ---
+GEMINI_RATE_LIMITER = RateLimiter(10, 120)
 
 
 def load_llm_client():
@@ -23,21 +62,24 @@ def llm_query(prompt: str | list[Dict[str, str]],
               system_prompt: Optional[str]=None,
               **kwargs
              ) -> Optional[str]:
+    # 新增：应用速率限制
+    GEMINI_RATE_LIMITER.acquire()
+    
     client, model_name = load_llm_client()
     messages = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
     
-    # 修正：正确处理不同类型的prompt并构建messages列表
     if isinstance(prompt, str):
         messages.append({"role": "user", "content": prompt})
+    # 【核心修改】允许直接传递一个完整的消息列表
     elif isinstance(prompt, list):
-        messages.extend(prompt)
+        messages += prompt
     else:
         raise NotImplementedError(f"不支持的 prompt 类型：{type(prompt)}")
 
     try:
-        # 核心修改：将 response_format 和 temperature 等参数通过 kwargs 传入
+        # 【核心修改】直接使用构建好的 messages 列表
         response = client.chat.completions.create(
             model=model_name,
             messages=messages,
@@ -50,74 +92,82 @@ def llm_query(prompt: str | list[Dict[str, str]],
         print(f"尝试获取回复过程中出错: {e}")
         return None
 
+# --- 新增：标准化相关函数 ---
 def _extract_hiragana(text: str) -> set:
     """从字符串中提取所有平假名字符。"""
     return set(re.findall(r'[ぁ-ん]', text))
 
 def llm_normalize(
     texts: List[str], 
-    max_retries: int = 3, 
-    validation_threshold: float = 0.8
+    max_retries: int = 3
 ) -> List[str]:
     """
-    使用 LLM 将日文文本列表（被视为一个段落的多个词）标准化为平假名，并进行验证和重试。
+    【多轮对话优化版】使用 LLM 将日文文本列表高效标准化为平假名。
+    通过模拟对话来强化规则和输出格式，以减少幻觉。
     """
+    # 1. 智能筛选：找出需要转换的词及其索引
+    words_to_convert = []
+    has_kanji_or_katakana = re.compile(r'[一-龯ァ-ン]')
+    for i, text in enumerate(texts):
+        if has_kanji_or_katakana.search(text):
+            words_to_convert.append({"index": i, "word": text})
+
+    if not words_to_convert:
+        return [re.sub(r'[^ぁ-ん]', '', text) for text in texts]
+
+    # 2. 【核心修改】将所有规则和角色定义放入 System Prompt
     system_prompt = (
-        "You are a highly precise Japanese linguistic processor. Your task is to convert a list of Japanese words, "
-        "which together form a coherent paragraph, into their correct hiragana readings. You must analyze the full "
-        "paragraph context to determine the correct pronunciation for each word. Your output must be a single, "
-        "valid JSON object."
+        "You are a highly precise Japanese linguistic processor. Your task is to provide the correct hiragana readings for a given list of words, based on the full sentence context provided.\n"
+        "RULES:\n"
+        "1. Your response MUST be a single valid JSON object with a key `\"results\"`.\n"
+        "2. The `\"results\"` value must be an array of objects.\n"
+        "3. Each object must have two keys: `\"index\"` (the original index) and `\"output\"` (the resulting hiragana string).\n"
+        "4. The number of objects in the `\"results\"` array must exactly match the number of objects in the input `words_to_convert` array."
     )
     
-    # 将词语列表连接成一个完整的段落以提供上下文
-    full_context_paragraph = "".join(texts)
-
-    # --- Few-shot 示例 ---
-    example_input_words = ["今日は", "、", "放", "課" ,"後", "みんな", "で", "練習", "する", "日", "だから", "、", "スコア", "忘れ", "ない", "よう", "に", "し", "ない", "と"]
-    example_context = "".join(example_input_words)
-    example_output_json = json.dumps(
+    # 3. 【核心修改】构建多轮对话历史作为 Few-shot 示例
+    # 示例的用户输入
+    example_context = "今日は放課後みんなで練習する日だから、スコア忘れないようにしないと"
+    example_words_to_convert = [
+        {"index": 0, "word": "今日"}, {"index": 2, "word": "放課後"},
+        {"index": 6, "word": "練習"}, {"index": 8, "word": "日"},
+        {"index": 11, "word": "スコア"}, {"index": 12, "word": "忘れ"}
+    ]
+    example_user_prompt = (
+        f"CONTEXT: \"{example_context}\"\n"
+        f"WORDS TO CONVERT: {json.dumps(example_words_to_convert, ensure_ascii=False)}"
+    )
+    # 示例的助手（模型）应答
+    example_assistant_response = json.dumps(
         {
             "results": [
-                {"input": "今日は", "output": "きょうは"}, {"input": "、", "output": "、"},
-                {"input": "放", "output": "ほう"}, {"input": "課", "output": "か"},
-                {"input": "後", "output": "ご"}, {"input": "みんな", "output": "みんな"},
-                {"input": "で", "output": "で"}, {"input": "練習", "output": "れんしゅう"},
-                {"input": "する", "output": "する"}, {"input": "日", "output": "ひ"},
-                {"input": "だから", "output": "だから"}, {"input": "、", "output": "、"},
-                {"input": "スコア", "output": "すこあ"}, {"input": "忘れ", "output": "わすれ"},
-                {"input": "ない", "output": "ない"}, {"input": "よう", "output": "よう"},
-                {"input": "に", "output": "に"}, {"input": "し", "output": "し"},
-                {"input": "ない", "output": "ない"}, {"input": "と", "output": "と"}
+                {"index": 0, "output": "きょう"}, {"index": 2, "output": "ほうかご"},
+                {"index": 6, "output": "れんしゅう"}, {"index": 8, "output": "ひ"},
+                {"index": 11, "output": "すこあ"}, {"index": 12, "output": "わすれ"}
             ]
-        }, ensure_ascii=False, indent=2
+        }, ensure_ascii=False
     )
 
-    for attempt in range(max_retries):
-        print(f"LLM 标准化尝试 ({attempt + 1}/{max_retries})...")
-        try:
-            prompt_content = json.dumps(texts, ensure_ascii=False)
-            full_prompt = (
-                "Please convert each Japanese word in the `words_to_convert` array into its hiragana reading. "
-                "Use the `full_context_paragraph` to determine the correct pronunciation for each word.\n\n"
-                "RULES:\n"
-                "1. Your response MUST be a single valid JSON object with a key `\"results\"` whose value is an array of objects.\n"
-                "2. Each object in the array must have two keys: `\"input\"` (the original or corrected word) and `\"output\"` (the hiragana string).\n"
-                "3. The number of objects in the `\"results\"` array must exactly match the `words_to_convert` array.\n"
-                "4. The input words are from a speech-to-text system and may contain minor errors. Use the context to correct them. The `\"input\"` field in your output should contain the *corrected* word.\n"
-                "5. Convert all Kanji and Katakana to hiragana. Preserve all original hiragana and punctuation in the `\"output\"` field.\n\n"
-                "--- FEW-SHOT EXAMPLE ---\n"
-                f"CONTEXT: \"{example_context}\"\n"
-                f"INPUT WORDS: {json.dumps(example_input_words, ensure_ascii=False)}\n"
-                f"EXPECTED JSON OUTPUT:\n{example_output_json}\n"
-                "--- END EXAMPLE ---\n\n"
-                "--- ACTUAL TASK ---\n"
-                f"CONTEXT: \"{full_context_paragraph}\"\n"
-                f"INPUT WORDS: {prompt_content}\n"
-                "YOUR JSON OUTPUT:"
-            )
+    # 实际任务的用户输入
+    full_context_paragraph = "".join(texts)
+    actual_user_prompt = (
+        f"CONTEXT: \"{full_context_paragraph}\"\n"
+        f"WORDS TO CONVERT: {json.dumps(words_to_convert, ensure_ascii=False)}"
+    )
 
+    # 将上述内容组合成一个对话历史
+    conversation_history = [
+        {"role": "user", "content": example_user_prompt},
+        {"role": "assistant", "content": example_assistant_response},
+        {"role": "user", "content": actual_user_prompt}
+    ]
+
+    for attempt in range(max_retries):
+        print(f"LLM 多轮对话标准化尝试 ({attempt + 1}/{max_retries})...")
+        try:
+            # 4. 【核心修改】调用 llm_query，传入完整的对话历史
             raw_response = llm_query(
-                full_prompt, 
+                conversation_history, # 传入整个对话列表
                 system_prompt,
                 response_format={"type": "json_object"},
                 temperature=0.1
@@ -133,45 +183,26 @@ def llm_normalize(
                 print(f"LLM 返回的 JSON 结构不正确（缺少 'results' 键），正在重试...")
                 continue
                 
-            normalized_pairs = response_data["results"]
+            normalized_parts = response_data["results"]
 
-            if not isinstance(normalized_pairs, list) or len(normalized_pairs) != len(texts):
-                print(f"LLM 返回了格式不匹配的 JSON（'results' 不是列表或长度不符），正在重试...")
+            if not isinstance(normalized_parts, list) or len(normalized_parts) != len(words_to_convert):
+                print(f"LLM 返回了格式不匹配的 JSON（'results' 长度不符），回复：{normalized_parts}，正在重试...")
                 continue
             
-            correctly_processed_count = 0
-            final_hiragana_list = []
-            
-            for i, pair in enumerate(normalized_pairs):
-                # 检查基本结构
-                if not isinstance(pair, dict) or "input" not in pair or "output" not in pair:
-                    # 结构错误的直接跳过，不计入正确数
-                    continue
+            # 5. 本地重组 (逻辑不变)
+            reconstructed_list = list(texts) 
+            for part in normalized_parts:
+                if isinstance(part, dict) and "index" in part and "output" in part:
+                    original_index = part["index"]
+                    hiragana_output = part["output"]
+                    if 0 <= original_index < len(reconstructed_list):
+                        reconstructed_list[original_index] = hiragana_output
+                else:
+                    raise ValueError("LLM 响应中的条目格式不正确")
 
-                original_text = texts[i]
-                llm_input = pair["input"]
-                llm_output = pair["output"]
-                
-                # 条件1: LLM的输入字段必须与原文完全一致
-                is_input_match = (original_text == llm_input)
-                # 条件2: 原文中的假名必须全部出现在输出中
-                original_hiragana = _extract_hiragana(original_text)
-                is_hiragana_preserved = original_hiragana.issubset(_extract_hiragana(llm_output))
-
-                if is_input_match and is_hiragana_preserved:
-                    correctly_processed_count += 1
-                
-                final_hiragana_list.append(llm_output)
-
-            # 在循环结束后，根据比例进行最终验证
-            proportion = correctly_processed_count / len(texts)
-            if proportion >= validation_threshold:
-                print(f"LLM 标准化成功并通过验证 (一致率: {proportion:.2%})。")
-                cleaned_results = [re.sub(r'[^ぁ-ん]', '', text) for text in final_hiragana_list]
-                return cleaned_results
-            else:
-                print(f"验证失败：一致率 {proportion:.2%} 低于阈值 {validation_threshold:.2%}。正在重试...")
-                # continue 会自动进入下一次循环
+            print(f"LLM 多轮对话标准化成功。")
+            cleaned_results = [re.sub(r'[^ぁ-ん]', '', text) for text in reconstructed_list]
+            return cleaned_results
 
         except json.JSONDecodeError:
             print(f"LLM 返回的不是有效的 JSON，正在重试... 回复: {raw_response}")

@@ -36,7 +36,7 @@ def extract_sentences_from_anki(path: str = "sentences", deck_name: str = "luna 
     从指定的 Anki 牌组中提取没有音频的例句。
     """
     print(f"正在查找 '{deck_name}' 牌组中所有笔记...")
-    query = f'"deck:{deck_name}" "audio_for_example_sentence:"'
+    query = f'"deck:{deck_name}"' # 这里并不要求 audio_for_example_sentence 为空，允许覆盖
     note_ids = invoke("findNotes", query=query)
     if not note_ids:
         print(f"在 '{deck_name}' 牌组中没有找到需要处理的笔记。")
