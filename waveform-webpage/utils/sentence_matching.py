@@ -125,7 +125,7 @@ def _transcribe_audio_worker(
             word_timestamps=True,
             **kwargs
         )
-        all_words = []
+        all_words: List[Word] = []
         print("子进程: 实时转写进度...")
         for segment in segments:
             start_time_str = time.strftime('%M:%S', time.gmtime(segment.start))

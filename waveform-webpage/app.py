@@ -10,7 +10,7 @@ import threading
 # --- 【新增】导入并行处理所需的库 ---
 import queue
 import concurrent.futures
-from typing import List, Dict, Set, Any, Tuple
+from typing import List, Dict, Set, Any, Tuple, Optional
 
 # 确保 utils 目录在 Python 路径中
 import utils.sentence_matching as sm
@@ -183,26 +183,48 @@ def serve_output(filename):
 # ==============================================================================
 # 后台任务函数 (核心修改处)
 # ==============================================================================
-def run_processing_task(task_id: str, video_paths: List[str], sentences: List[str], enable_separation: bool) -> None:
-    """使用生产者-消费者模型实现GPU串行，CPU并行的处理流程。"""
+def run_processing_task(
+        task_id: str, 
+        video_paths: List[str], 
+        sentences: List[str], 
+        enable_separation: bool
+    ) -> None:
+    """
+    使用生产者-消费者模型实现GPU串行，CPU并行的处理流程。
+
+    task_id: 任务编号
+    video_paths: 上传的视频文件储存的位置
+    sentences: 待匹配的句子
+    """
     try:
         # --- 1. 初始化与预处理 ---
         sentence_map_path = os.path.join(app.config['SENTENCES_FOLDER'], 'anki_sentences.json')
         sentence_to_note_id = {}
         if os.path.exists(sentence_map_path):
             with open(sentence_map_path, 'r', encoding='utf-8') as f:
-                id_to_sentence = json.load(f)
+                id_to_sentence: Dict[int, str] = json.load(f)
                 sentence_to_note_id = {v: k for k, v in id_to_sentence.items()}
         
-        # --- 【核心修改】一次性标准化所有目标句子 ---
-        tasks[task_id]["message"] = f"正在批量标准化 {len(sentences)} 个目标句子..."
-        norm_sentences_map = sm.batch_normalize_texts(sentences)
-        # 语音转写完成，等待 LLM 匹配
-        llm_queue = queue.Queue()
+        # --- 【核心修改】将目标句子标准化放入独立线程，并使用队列传递结果 ---
+        tasks[task_id]["message"] = f"正在异步批量标准化 {len(sentences)} 个目标句子..."
+        preprocess_queue = queue.Queue(maxsize=1)
+        
+        def preprocess_worker():
+            """在独立线程中运行LLM标准化，完成后将结果放入队列。"""
+            try:
+                normalized_map = sm.batch_normalize_texts(sentences)
+                preprocess_queue.put(normalized_map)
+            except Exception as e:
+                print(f"LLM 句子标准化工作线程发生错误: {e}")
+                preprocess_queue.put({}) # 放入空字典表示失败
+
+        preprocess_thread = threading.Thread(target=preprocess_worker)
+        preprocess_thread.start()
+
         # 标准化完成、等待匹配的任务队列
         task_queue: queue.Queue = queue.Queue(maxsize=os.cpu_count() or 1)
-        # 使用标准化的句子映射作为待办事项列表
-        remaining_sentences_map = norm_sentences_map.copy()
+        # 将 remaining_sentences_map 的初始化推迟到消费者线程中
+        remaining_sentences_map: Optional[Dict[str, str]] = None
         all_clips_results: List[Dict[str, Any]] = []
         lock = threading.Lock()
         
@@ -210,6 +232,7 @@ def run_processing_task(task_id: str, video_paths: List[str], sentences: List[st
         # 这个函数负责字符串模糊匹配
         def cpu_consumer_worker() -> None:
             """消费者线程: 并行执行CPU密集型任务 (句子匹配)。"""
+            nonlocal remaining_sentences_map
             while True:
                 task_item = task_queue.get()
                 if task_item is None:
@@ -218,7 +241,13 @@ def run_processing_task(task_id: str, video_paths: List[str], sentences: List[st
                 video_path, all_words, norm_words, clip_source_path = task_item
                 original_filename = os.path.basename(video_path)
                 
-                with lock:
+                with lock: # 互斥锁：防止多个线程同时初始化
+                    # 懒初始化：第一个进入的消费者线程负责从队列获取结果并初始化共享字典
+                    if remaining_sentences_map is None:
+                        tasks[task_id]["message"] = "语音转写进行中，等待目标句子标准化完成..."
+                        norm_sentences_map = preprocess_queue.get() # 此处会阻塞，直到LLM任务完成
+                        remaining_sentences_map = norm_sentences_map.copy() if norm_sentences_map else {}
+
                     if not remaining_sentences_map:
                         task_queue.task_done()
                         continue
@@ -237,6 +266,8 @@ def run_processing_task(task_id: str, video_paths: List[str], sentences: List[st
 
                 if match_results:
                     with lock:
+                        # 再次检查 remaining_sentences_map 是否已初始化
+                        if remaining_sentences_map is None: continue 
                         for clip in match_results:
                             sentence = clip['sentence']
                             # 如果匹配到的句子仍在待办列表中，则处理并移除
@@ -258,7 +289,8 @@ def run_processing_task(task_id: str, video_paths: List[str], sentences: List[st
         # --- 4. 主线程作为生产者，串行执行GPU任务 ---
         for i, video_path in enumerate(video_paths):
             with lock:
-                if not remaining_sentences_map:
+                # 在开始新的转写任务前，检查句子是否都已找到
+                if remaining_sentences_map is not None and not remaining_sentences_map:
                     tasks[task_id]["message"] = "所有句子已找到，提前结束转写。"
                     break
             
@@ -269,10 +301,12 @@ def run_processing_task(task_id: str, video_paths: List[str], sentences: List[st
             # --- 【核心修改】调用新的、集成了标准化的转写函数 ---
             audio_for_transcription = video_path
             if enable_separation:
-                progress_callback("正在分离音源...")
-                vocals_path = sm.separate_vocals(video_path)
-                if vocals_path:
-                    audio_for_transcription = vocals_path
+                # TODO: 目前音源分离函数有 Bug，直接禁止运行
+                raise NotImplementedError()
+                # progress_callback("正在分离音源...")
+                # vocals_path = sm.separate_vocals(video_path)
+                # if vocals_path:
+                #     audio_for_transcription = vocals_path
             
             progress_callback("正在识别与标准化转写稿...")
             transcription_result = sm.transcribe_and_normalize_audio(
@@ -295,6 +329,8 @@ def run_processing_task(task_id: str, video_paths: List[str], sentences: List[st
             task_queue.put(None)
         for t in consumer_threads:
             t.join()
+        
+        preprocess_thread.join() # 确保LLM线程也已结束
 
         # --- 6. 整理并保存最终结果 ---
         if not all_clips_results:
