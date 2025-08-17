@@ -474,5 +474,41 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
+    // --- 功能：允许鼠标滚轮在波形图上水平滚动 ---
+    // 也就是，不需要 Shift + 滚轮，即可自由滚动
+    const waveForm = document.getElementById('waveform');
+
+    // 为该元素添加 'wheel' 事件监听器
+    waveForm.addEventListener('wheel', (event) => {
+        try {
+            // 找到 Shadow DOM 的宿主 (host)
+            // 根据 WaveSurfer 的结构，它是 #waveform 里的第一个 <div>
+            const shadowHost = waveForm.querySelector('div');
+
+            // 访问 Shadow DOM
+            if (shadowHost && shadowHost.shadowRoot) {
+                const shadowRoot = shadowHost.shadowRoot;
+
+                // 在 Shadow DOM 内部查找真正的滚动元素
+                // 它的 class 是 "scroll"
+                const scrollableElement = shadowRoot.querySelector('.scroll');
+
+                if (scrollableElement) {
+                    // 检查内容是否真的需要滚动
+                    if (scrollableElement.scrollWidth > scrollableElement.clientWidth) {
+                        // 阻止页面默认的垂直滚动行为
+                        event.preventDefault();
+
+                        // 将滚轮的垂直偏移量应用到目标的水平滚动上
+                        scrollableElement.scrollLeft += event.deltaY;
+                    }
+                }
+            }
+        } catch (error) {
+            // 如果发生任何错误，在控制台打印出来，方便调试
+            console.error('Error during horizontal scroll:', error);
+        }
+    }, { passive: false }); // 使用 { passive: false } 来确保 preventDefault() 生效
+
     init();
 });
