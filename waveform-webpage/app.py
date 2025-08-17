@@ -287,8 +287,8 @@ def run_processing_task(
                     all_words=all_words,
                     norm_words=norm_words,
                     target_sentences_map=current_sentences_to_find,
-                    confidence_threshold=70, 
-                    search_mode='exhaustive'
+                    confidence_threshold=50, 
+                    search_mode='levenschtein'
                 )
 
                 if match_results:

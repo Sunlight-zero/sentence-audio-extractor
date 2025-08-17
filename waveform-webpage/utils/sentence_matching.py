@@ -19,11 +19,11 @@ import mojimoji
 
 try:
     # 尝试相对导入，这在作为模块导入时会成功
-    from .fuzzy_string_matching import fuzzy_match
+    from .fast_match import fast_fuzzy_match
     from .llm_handler import llm_normalize
 except ImportError:
     # 如果相对导入失败，说明是作为顶层脚本运行，回退到绝对导入
-    from fuzzy_string_matching import fuzzy_match
+    from fast_match import fast_fuzzy_match
     from llm_handler import llm_normalize
 
 
@@ -257,6 +257,8 @@ def find_best_match_in_words(
                 score = fuzz.ratio(norm_target, current_sequence)
                 if score > best_score:
                     best_score, best_start_idx, best_end_idx = score, i, j - 1
+    elif search_mode == "levenschtein":
+        best_score, best_start_idx, best_end_idx = fast_fuzzy_match(norm_words, norm_target)
     
     if best_score < confidence_threshold:
         return None
@@ -424,8 +426,9 @@ if __name__ == "__main__":
     MODEL_PATH_OR_SIZE = "D:/ACGN/gal/whisper/models/faster-whisper-medium"
     DEVICE = "cuda"
     COMPUTE_TYPE = "float16"
-    SEARCH_MODE = 'exhaustive'
-    CONFIDENCE_THRESHOLD = 75
+    # SEARCH_MODE = 'exhaustive'
+    SEARCH_MODE = 'levenschtein'
+    CONFIDENCE_THRESHOLD = 50
 
     print("--- 开始执行批量处理测试 (串行模式) ---")
     if not os.path.exists(INPUT_AUDIO_PATH):
