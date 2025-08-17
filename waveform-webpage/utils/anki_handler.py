@@ -10,6 +10,9 @@ import json
 import base64
 import os
 from typing import Dict, List, Any
+import re
+# --- 【核心修正】导入 hashlib 模块用于计算哈希值 ---
+import hashlib
 
 # AnkiConnect API 的 URL
 ANKICONNECT_URL = "http://localhost:8765"
@@ -36,7 +39,7 @@ def extract_sentences_from_anki(path: str = "sentences", deck_name: str = "luna 
     从指定的 Anki 牌组中提取没有音频的例句。
     """
     print(f"正在查找 '{deck_name}' 牌组中所有笔记...")
-    query = f'"deck:{deck_name}"' # 这里并不要求 audio_for_example_sentence 为空，允许覆盖
+    query = f'"deck:{deck_name}"'
     note_ids = invoke("findNotes", query=query)
     if not note_ids:
         print(f"在 '{deck_name}' 牌组中没有找到需要处理的笔记。")
@@ -95,28 +98,36 @@ def upload_clips_to_anki(clips_data: List[Dict[str, Any]], final_deck: str = "Ja
             skipped_count += 1
             continue
         
-        # --- 核心修正：将 note_id 从字符串转换为整数 ---
         try:
             note_id = int(note_id_str)
         except (ValueError, TypeError):
             print(f"  - [错误] 笔记 ID '{note_id_str}' 不是一个有效的整数，已跳过。")
             skipped_count += 1
             continue
-        # --- 修正结束 ---
 
         print(f"\n正在处理笔记 ID: {note_id} (句子: {sentence[:20]}...)")
         
         try:
-            base_name, _ = os.path.splitext(original_video_filename)
-            safe_sentence_part = "".join(c for c in sentence[:20] if c.isalnum() or c in ' -').strip()
-            audio_filename = f"anki_clip_{base_name}_{note_id}_{safe_sentence_part}.wav"
+            if ',' in audio_base64:
+                pure_base64_data = audio_base64.split(',', 1)[1]
+            else:
+                pure_base64_data = audio_base64
 
-            invoke('storeMediaFile', filename=audio_filename, data=audio_base64)
+            # --- 【核心修正】使用音频内容的 SHA256 哈希值作为文件名 ---
+            # 1. 从 Base64 字符串解码为二进制数据
+            audio_bytes = base64.b64decode(pure_base64_data)
+            # 2. 计算 SHA256 哈希值
+            sha256_hash = hashlib.sha256(audio_bytes).hexdigest()
+            # 3. 创建新的文件名
+            audio_filename = f"{sha256_hash}.wav"
+            # --- 修正结束 ---
+
+            invoke('storeMediaFile', filename=audio_filename, data=pure_base64_data)
             print(f"  - [成功] 音频文件 '{audio_filename}' 已上传。")
             
             update_payload = {
                 "note": {
-                    "id": note_id,  # 现在这里是整数
+                    "id": note_id,
                     "fields": {
                         "audio_for_example_sentence": f"[sound:{audio_filename}]"
                     }
@@ -125,7 +136,7 @@ def upload_clips_to_anki(clips_data: List[Dict[str, Any]], final_deck: str = "Ja
             invoke('updateNoteFields', **update_payload)
             print(f"  - [成功] 笔记 {note_id} 的音频字段已更新。")
 
-            card_ids = invoke('findCards', query=f'nid:{note_id}') # 这里 note_id 也是整数
+            card_ids = invoke('findCards', query=f'nid:{note_id}')
             if card_ids:
                 invoke('changeDeck', cards=card_ids, deck=final_deck)
                 print(f"  - [成功] {len(card_ids)} 张关联卡片已移动到 '{final_deck}'。")

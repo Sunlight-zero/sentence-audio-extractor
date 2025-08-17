@@ -17,6 +17,8 @@ import utils.sentence_matching as sm
 # --- 新增 ---
 # 导入新的 Anki 处理模块
 import utils.anki_handler as anki
+# --- 【核心修改】移除不再需要的直接导入 ---
+
 
 # --- Flask 应用初始化与目录配置 ---
 app = Flask(__name__, static_folder='static', static_url_path='')
@@ -190,11 +192,7 @@ def run_processing_task(
         enable_separation: bool
     ) -> None:
     """
-    使用生产者-消费者模型实现GPU串行，CPU并行的处理流程。
-
-    task_id: 任务编号
-    video_paths: 上传的视频文件储存的位置
-    sentences: 待匹配的句子
+    使用三级生产者-消费者模型实现GPU、LLM、CPU并行处理。
     """
     try:
         # --- 1. 初始化与预处理 ---
@@ -205,53 +203,82 @@ def run_processing_task(
                 id_to_sentence: Dict[int, str] = json.load(f)
                 sentence_to_note_id = {v: k for k, v in id_to_sentence.items()}
         
-        # --- 【核心修改】将目标句子标准化放入独立线程，并使用队列传递结果 ---
         tasks[task_id]["message"] = f"正在异步批量标准化 {len(sentences)} 个目标句子..."
         preprocess_queue = queue.Queue(maxsize=1)
         
         def preprocess_worker():
-            """在独立线程中运行LLM标准化，完成后将结果放入队列。"""
+            """在独立线程中运行目标句子的LLM标准化。"""
             try:
                 normalized_map = sm.batch_normalize_texts(sentences)
                 preprocess_queue.put(normalized_map)
             except Exception as e:
                 print(f"LLM 句子标准化工作线程发生错误: {e}")
-                preprocess_queue.put({}) # 放入空字典表示失败
-
+                preprocess_queue.put({})
         preprocess_thread = threading.Thread(target=preprocess_worker)
         preprocess_thread.start()
 
-        # 标准化完成、等待匹配的任务队列
-        task_queue: queue.Queue = queue.Queue(maxsize=os.cpu_count() or 1)
-        # 将 remaining_sentences_map 的初始化推迟到消费者线程中
+        # --- 【核心修改】定义三级流水线的队列 ---
+        # 队列1：Whisper -> LLM
+        transcription_queue: queue.Queue = queue.Queue(maxsize=os.cpu_count() or 1)
+        # 队列2：LLM -> Matcher
+        matching_queue: queue.Queue = queue.Queue(maxsize=os.cpu_count() or 1)
+        
         remaining_sentences_map: Optional[Dict[str, str]] = None
         all_clips_results: List[Dict[str, Any]] = []
         lock = threading.Lock()
         
         # --- 2. 定义消费者工作函数 ---
-        # 这个函数负责字符串模糊匹配
+
+        # 【新增】消费者1 / 生产者2: LLM 标准化工作线程
+        def llm_normalization_worker():
+            """消费来自 Whisper 的结果，执行 LLM 标准化，然后生产给匹配器。"""
+            while True:
+                task_item = transcription_queue.get()
+                if task_item is None:
+                    break
+                
+                video_path, all_words, clip_source_path = task_item
+                try:
+                    if all_words:
+                        tasks[task_id]["message"] = f"[标准化中] {os.path.basename(video_path)} 的转写稿..."
+                        # --- 【核心修改】调用 sm.normalize_words 封装函数 ---
+                        norm_words = sm.normalize_words(all_words, method="llm")
+                        matching_queue.put((video_path, all_words, norm_words, clip_source_path))
+                    else:
+                        # 如果没有识别结果，也放入一个空任务以保持流程
+                        matching_queue.put((video_path, [], [], clip_source_path))
+                except Exception as e:
+                    print(f"LLM 标准化线程出错 ({os.path.basename(video_path)}): {e}")
+                    # 放入空任务，避免阻塞
+                    matching_queue.put((video_path, all_words, [], clip_source_path))
+                finally:
+                    transcription_queue.task_done()
+        
+        # 消费者2: 句子匹配工作线程
         def cpu_consumer_worker() -> None:
             """消费者线程: 并行执行CPU密集型任务 (句子匹配)。"""
             nonlocal remaining_sentences_map
             while True:
-                task_item = task_queue.get()
+                task_item = matching_queue.get() # 从新的 matching_queue 获取
                 if task_item is None:
                     break
                 
                 video_path, all_words, norm_words, clip_source_path = task_item
                 original_filename = os.path.basename(video_path)
                 
-                with lock: # 互斥锁：防止多个线程同时初始化
-                    # 懒初始化：第一个进入的消费者线程负责从队列获取结果并初始化共享字典
+                if not norm_words: # 如果标准化失败，则跳过
+                    matching_queue.task_done()
+                    continue
+
+                with lock:
                     if remaining_sentences_map is None:
                         tasks[task_id]["message"] = "语音转写进行中，等待目标句子标准化完成..."
-                        norm_sentences_map = preprocess_queue.get() # 此处会阻塞，直到LLM任务完成
+                        norm_sentences_map = preprocess_queue.get()
                         remaining_sentences_map = norm_sentences_map.copy() if norm_sentences_map else {}
 
                     if not remaining_sentences_map:
-                        task_queue.task_done()
+                        matching_queue.task_done()
                         continue
-                    # 传递当前剩余的句子进行匹配
                     current_sentences_to_find = remaining_sentences_map.copy()
                 
                 tasks[task_id]["message"] = f"[匹配中] {original_filename} (剩余 {len(current_sentences_to_find)} 句)"
@@ -266,11 +293,9 @@ def run_processing_task(
 
                 if match_results:
                     with lock:
-                        # 再次检查 remaining_sentences_map 是否已初始化
                         if remaining_sentences_map is None: continue 
                         for clip in match_results:
                             sentence = clip['sentence']
-                            # 如果匹配到的句子仍在待办列表中，则处理并移除
                             if sentence in remaining_sentences_map:
                                 clip['clip_source_path'] = clip_source_path
                                 clip['original_video_filename'] = original_filename
@@ -278,59 +303,56 @@ def run_processing_task(
                                 clip['note_id'] = sentence_to_note_id.get(sentence)
                                 all_clips_results.append(clip)
                                 del remaining_sentences_map[sentence]
-                task_queue.task_done()
+                matching_queue.task_done()
 
         # --- 3. 启动消费者线程池 ---
-        num_consumers = os.cpu_count() or 2
-        consumer_threads = [threading.Thread(target=cpu_consumer_worker, daemon=True) for _ in range(num_consumers)]
-        for t in consumer_threads:
-            t.start()
+        num_cpu_consumers = os.cpu_count() or 2
+        # 【核心修改】为 LLM 和 CPU 分别创建线程池
+        llm_threads = [threading.Thread(target=llm_normalization_worker, daemon=True) for _ in range(num_cpu_consumers)]
+        matcher_threads = [threading.Thread(target=cpu_consumer_worker, daemon=True) for _ in range(num_cpu_consumers)]
+        
+        for t in llm_threads: t.start()
+        for t in matcher_threads: t.start()
 
-        # --- 4. 主线程作为生产者，串行执行GPU任务 ---
+        # --- 4. 主线程作为生产者1，串行执行GPU任务 (Whisper) ---
         for i, video_path in enumerate(video_paths):
             with lock:
-                # 在开始新的转写任务前，检查句子是否都已找到
                 if remaining_sentences_map is not None and not remaining_sentences_map:
                     tasks[task_id]["message"] = "所有句子已找到，提前结束转写。"
                     break
             
             original_filename = os.path.basename(video_path)
-            def progress_callback(message: str) -> None:
-                tasks[task_id]["message"] = f"[转写 {i+1}/{len(video_paths)}] {original_filename}: {message}"
-
-            # --- 【核心修改】调用新的、集成了标准化的转写函数 ---
+            
             audio_for_transcription = video_path
             if enable_separation:
                 # TODO: 目前音源分离函数有 Bug，直接禁止运行
-                raise NotImplementedError()
-                # progress_callback("正在分离音源...")
-                # vocals_path = sm.separate_vocals(video_path)
-                # if vocals_path:
-                #     audio_for_transcription = vocals_path
+                raise NotImplementedError("目前不可以分离音频")
             
-            progress_callback("正在识别与标准化转写稿...")
+            tasks[task_id]["message"] = f"[转写 {i+1}/{len(video_paths)}] {original_filename}: 正在识别..."
+            # --- 【核心修改】调用解耦后的函数，不执行标准化 ---
             transcription_result = sm.transcribe_and_normalize_audio(
                 audio_path=audio_for_transcription,
-                model_path="medium",
-                device="cuda",
-                compute_type="float16"
+                model_path="medium", device="cuda", compute_type="float16",
+                perform_normalization=False
             )
             
             if transcription_result:
-                all_words, norm_words = transcription_result
-                clip_source = sm.separate_vocals.vocals_path if enable_separation and sm.separate_vocals.vocals_path else video_path
-                task_queue.put((video_path, all_words, norm_words, clip_source))
+                all_words, _ = transcription_result # 第二个返回值为 None
+                clip_source = video_path # 简化 clip_source 逻辑
+                transcription_queue.put((video_path, all_words, clip_source))
             else:
-                print(f"警告: 视频 {original_filename} 转写失败或未返回词语，已跳过。")
+                print(f"警告: 视频 {original_filename} 转写失败，已跳过。")
         
-        # --- 5. 等待所有任务完成 ---
-        task_queue.join()
-        for _ in range(num_consumers):
-            task_queue.put(None)
-        for t in consumer_threads:
-            t.join()
+        # --- 5. 等待所有任务完成 (新的关闭顺序) ---
+        transcription_queue.join()
+        for _ in range(num_cpu_consumers): transcription_queue.put(None)
+        for t in llm_threads: t.join()
         
-        preprocess_thread.join() # 确保LLM线程也已结束
+        matching_queue.join()
+        for _ in range(num_cpu_consumers): matching_queue.put(None)
+        for t in matcher_threads: t.join()
+        
+        preprocess_thread.join()
 
         # --- 6. 整理并保存最终结果 ---
         if not all_clips_results:
@@ -340,10 +362,7 @@ def run_processing_task(
         json_filename = f"results_{task_id[:8]}.json"
         json_path = os.path.join(app.config['RESULTS_FOLDER'], json_filename)
         
-        final_json_data = {
-            "clips": sorted(all_clips_results, key=lambda x: x.get('score', 0), reverse=True)
-        }
-
+        final_json_data = { "clips": sorted(all_clips_results, key=lambda x: x.get('score', 0), reverse=True) }
         with open(json_path, 'w', encoding='utf-8') as f:
             json.dump(final_json_data, f, ensure_ascii=False, indent=4)
 

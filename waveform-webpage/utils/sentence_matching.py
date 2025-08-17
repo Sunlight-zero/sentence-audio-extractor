@@ -29,6 +29,21 @@ except ImportError:
 
 SUPPRESS_TOKEN_FILE = None
 
+# --- 【核心修正】将文件名清理函数移入此文件 ---
+def _sanitize_filename_part(text: str, max_length: int = 50) -> str:
+    """
+    清理字符串，使其成为一个安全的文件名组成部分。
+    移除所有在主流操作系统中不允许用于文件名的字符，并截断到合理长度。
+    """
+    # 定义一个包含常见非法字符的正则表达式 (包括全角和半角版本)
+    invalid_chars = r'[\\/:*?"<>|？：]'
+    # 将所有非法字符替换为下划线
+    sanitized_text = re.sub(invalid_chars, '_', text)
+    # 将可能存在的空白符（如换行、制表符）也替换为下划线
+    sanitized_text = re.sub(r'\s+', '_', sanitized_text)
+    # 截断文件名，避免过长导致的问题
+    return sanitized_text[:max_length]
+
 # ==============================================================================
 # 1. 文本标准化模块 (有修改)
 # ==============================================================================
@@ -107,6 +122,8 @@ def _transcribe_audio_worker(
         queue: multiprocessing.Queue, 
         audio_path: str, model_path: str, 
         device: str, compute_type: str,
+        # --- 【核心修改】新增参数以控制是否执行标准化 ---
+        perform_normalization: bool,
         suppress_file_path: Optional[str]=SUPPRESS_TOKEN_FILE
     ):
     """【子进程】执行Whisper语音识别。"""
@@ -136,43 +153,57 @@ def _transcribe_audio_worker(
         if not all_words:
             raise Exception("错误：未识别出任何词语")
 
-        # --- 【核心修改】转写后立即进行一次标准化 ---
-        print("子进程: 转写完成，开始标准化转写稿...")
-        try:
-            # llm_normalize 需要一个词的列表
-            word_texts = [word.word for word in all_words]
-            normalized_word_texts = llm_normalize(word_texts)
-        except Exception as e:
-            print(f"子进程: LLM 标准化失败，回退到传统方法: {e}")
-            normalized_word_texts = [normalize_japanese_text(word.word) for word in all_words]
+        # --- 【核心修改】根据参数决定是否执行标准化 ---
+        if perform_normalization:
+            print("子进程: 转写完成，开始标准化转写稿...")
+            try:
+                word_texts = [word.word for word in all_words]
+                normalized_word_texts = llm_normalize(word_texts)
+            except Exception as e:
+                print(f"子进程: LLM 标准化失败，回退到传统方法: {e}")
+                normalized_word_texts = [normalize_japanese_text(word.word) for word in all_words]
 
-        print("子进程: 标准化完成。")
-        queue.put((all_words, normalized_word_texts))
+            print("子进程: 标准化完成。")
+            queue.put((all_words, normalized_word_texts))
+        else:
+            print("子进程: 转写完成，跳过标准化。")
+            queue.put((all_words, None)) # 保持元组结构，第二个元素为 None
 
     except Exception as e:
         print(f"子进程 Whisper 错误: {e}")
         queue.put(None)
 
-def transcribe_and_normalize_audio(audio_path: str, model_path: str, device: str, compute_type: str) -> Optional[Tuple[List[Word], List[str]]]:
+def transcribe_and_normalize_audio(
+    audio_path: str, 
+    model_path: str, 
+    device: str, 
+    compute_type: str,
+    # --- 【核心修改】新增参数，并设默认值为 True 以保持向后兼容 ---
+    perform_normalization: bool = True
+) -> Optional[Tuple[List[Word], Optional[List[str]]]]:
     """
-    【修改】主进程接口，启动子进程进行语音识别和标准化。
-    返回原始词对象和标准化后的词文本列表。
+    【修改】主进程接口，启动子进程进行语音识别和可选的标准化。
+    返回原始词对象和（可选的）标准化后的词文本列表。
     """
-    print("\n--- 语音识别与标准化模块 ---")
+    print("\n--- 语音识别模块 ---")
     ctx = multiprocessing.get_context('spawn')
     q = ctx.Queue()
     process = ctx.Process(
         target=_transcribe_audio_worker,
-        args=(q, audio_path, model_path, device, compute_type, SUPPRESS_TOKEN_FILE)
+        # --- 【核心修改】将新参数传递给子进程 ---
+        args=(q, audio_path, model_path, device, compute_type, perform_normalization, SUPPRESS_TOKEN_FILE)
     )
     process.start()
     result = q.get()
     process.join()
-    print("主进程: 语音识别与标准化完成。")
+    print("主进程: 语音识别完成。")
     return result
 
 def normalize_words(all_words: list[Word], method: str = "llm") -> list[str]:
-    """【旧函数，保留但不再是主要流程】"""
+    """
+    句子标准化函数接口。
+    如果指定使用 "llm" 方法，将通过网络调用 LLM 并获取输出
+    """
     if method == "normal":
         print("使用传统方法进行标准化...")
         return [normalize_japanese_text(word.word) for word in all_words]
@@ -282,8 +313,9 @@ def find_best_match_for_all_sentences(
         )
         if match_result:
             print(f"  -> 成功匹配: '{sentence[:20]}...' (得分: {match_result['score']})")
+            safe_id_part = _sanitize_filename_part(sentence[:20], max_length=20)
             all_results.append({
-                "id": f"clip-{sentence[:10]}",
+                "id": f"clip-{safe_id_part}-{int(time.time())}",
                 "sentence": sentence,
                 "predicted_start": round(match_result['start_timestamp'], 3),
                 "predicted_end": round(match_result['end_timestamp'], 3),
