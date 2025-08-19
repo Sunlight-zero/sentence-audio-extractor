@@ -99,10 +99,10 @@ std::tuple<float, int, int> fuzzy_match(
 
     if (best_match > (int) m)
     {
-        return std::make_tuple(-1.f, 0, 0);
+        return std::make_tuple(0.f, 0, 0);
     }
 
-    float best_score = 100. * (float) (m - 2 * best_match) / m;
+    float best_score = 100. * (float) (m - best_match) / m;
     size_t start_idx = 0, i, j;
     for (i = m, j = l; i > 0 && j > 0;)
     {

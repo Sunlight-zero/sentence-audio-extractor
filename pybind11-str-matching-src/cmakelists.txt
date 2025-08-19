@@ -1,0 +1,37 @@
+# CMake 最低版本要求
+cmake_minimum_required(VERSION 3.15)
+
+# 项目名称和语言
+project(PybindStrMatching LANGUAGES CXX)
+
+# --- 查找依赖 ---
+# 查找通过 pip 安装的 Pybind11
+# 这会同时找到并配置好 Python 的头文件和库
+set(PYBIND11_FINDPYTHON ON)
+find_package(pybind11 REQUIRED)
+
+# --- 定义 Python 模块 ---
+
+# 使用 pybind11_add_module 创建 Python 扩展模块
+# 1. 模块名 "fast_match" 必须与 C++ 代码中 PYBIND11_MODULE(fast_match, ...) 里的名字一致
+# 2. 列出所有需要参与编译的源文件
+pybind11_add_module(fast_match
+    src/main.cpp
+)
+
+# --- 配置模块属性 ---
+
+# 1. 为 fast_match 目标添加 include 目录
+#    因为 utfcpp 文件夹在 src/ 内部, 所以我们需要把 src/ 添加到搜索路径
+target_include_directories(fast_match
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+# 2. 推荐：明确指定 C++ 标准
+target_compile_features(fast_match PRIVATE cxx_std_17)
+
+# 3. 推荐：为 g++ 添加优化和警告标志
+if(MSVC)
+    target_compile_options(fast_match PRIVATE /W4 /WX- /O2 /GR /EHsc)
+endif()

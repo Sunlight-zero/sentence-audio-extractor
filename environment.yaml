@@ -1,0 +1,59 @@
+# environment.yml
+# 一个用于多种自动化工作流的、集成了 Python 和 Javascript 的 Conda 环境
+# **注意**：此时不保证环境已经完整！需再次确认！
+name: workflow  # 您可以自定义环境名称
+
+channels:
+  - pytorch      # PyTorch 官方 channel，优先级最高
+  - nvidia       # NVIDIA channel，用于 CUDA
+  - conda-forge  # 社区维护的 channel，包最全
+  - defaults     # Conda 默认 channel
+
+dependencies:
+  # 1. 核心环境 (Core Environment)
+  # ==================================
+  - python=3.10      # 推荐一个稳定且广泛支持的 Python 版本
+  - nodejs=20        # 安装一个最新的长期支持版 (LTS) Node.js
+  - pip              # Conda 环境中也需要 pip
+  - ffmpeg           # (来自上次讨论) 音视频处理的核心工具，Whisper 依赖它
+
+  # 2. AI 与机器学习 (AI & Machine Learning)
+  # ==========================================
+  - pytorch=2.5.1=cuda126_mkl_py310_h5866544_316         # 深度学习框架
+  - torchvision      # 图像处理相关库
+  - torchaudio       # 音频处理相关库
+  - cuda-toolkit=12.3.0 # 如果您有 NVIDIA GPU，请指定 CUDA 版本以获得加速
+
+  # 3. Web 自动化与爬虫 (Web Automation & Scraping)
+  # ===============================================
+  - requests         # HTTP 请求库，用于 API 交互
+  - beautifulsoup4   # 经典的 HTML/XML 解析库
+  - selenium         # 传统的浏览器自动化框架
+  
+  # 4. 数据处理与文件操作 (Data & File Handling)
+  # ===========================================
+  - pandas           # 强大的数据分析和操作库 (处理 CSV, Excel 等)
+  - numpy            # 科学计算基础库
+  - openpyxl         # 读写 Excel (.xlsx) 文件
+  - python-docx      # 读写 Word (.docx) 文件
+  - pillow           # 图像处理库
+  - tqdm             # 优雅的进度条，用于监控长时间运行的任务
+  - pybind11         # 使用 C++ 高效地实现 Python
+
+  # 5. 开发工具与代码质量 (Development & Linting)
+  # ===============================================
+  - jupyterlab       # 交互式开发环境，非常适合测试和探索
+  - ipykernel        # 让 Jupyter 能识别此 conda 环境
+  - black            # Python 代码格式化工具
+  - ruff             # 极速的 Python Linter，代码质量检查
+  - python-dotenv    # 从 .env 文件中读取环境变量 (如 API Key)
+
+  # 6. 使用 pip 安装的包 (Conda channel 中没有或版本较旧的)
+  # ========================================================
+  - pip:
+    - faster-whisper
+    - pyautogui      # 桌面 GUI 自动化，模拟键鼠操作
+    - openai           # OpenAI 官方 API 客户端
+    - mecab-python3    # MeCab 的 Python 接口
+    - unidic-lite      # 易于安装的 Unidic 日语字典
+  
