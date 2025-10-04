@@ -27,7 +27,8 @@ except ImportError:
     from llm_handler import llm_normalize
 
 
-SUPPRESS_TOKEN_FILE = None
+SUPPRESS_TOKEN_FILE = r"D:\program\Python\auto-workflows\stt-backup\stt-test\prevent-kanji-stt\kanji_tokens.txt"
+PROMPT = "いかの たいわは ぜんぶ ひらがなか カタカナで アウトプットして ください。プロンプトの ように しゅつりょくして ください。"
 
 # --- 【核心修正】将文件名清理函数移入此文件 ---
 def _sanitize_filename_part(text: str, max_length: int = 50) -> str:
@@ -124,7 +125,8 @@ def _transcribe_audio_worker(
         device: str, compute_type: str,
         # --- 【核心修改】新增参数以控制是否执行标准化 ---
         perform_normalization: bool,
-        suppress_file_path: Optional[str]=SUPPRESS_TOKEN_FILE
+        suppress_file_path: Optional[str]=SUPPRESS_TOKEN_FILE,
+        prompt: str=PROMPT
     ):
     """【子进程】执行Whisper语音识别。"""
     print(f"子进程: 加载 Whisper 模型 '{model_path}'...")
@@ -140,6 +142,7 @@ def _transcribe_audio_worker(
             audio_path, 
             language="ja", 
             word_timestamps=True,
+            initial_prompt=prompt,
             **kwargs
         )
         all_words: List[Word] = []

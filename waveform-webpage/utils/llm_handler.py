@@ -105,54 +105,74 @@ def llm_normalize(
     【多轮对话优化版】使用 LLM 将日文文本列表高效标准化为平假名。
     通过模拟对话来强化规则和输出格式，以减少幻觉。
     """
-    # 1. 智能筛选：找出需要转换的词及其索引
-    words_to_convert = []
+    # 1. 构造目标 HTML 句子
+    sentence_in_hypertext = ""
+    cnt = 0
     has_kanji_or_katakana = re.compile(r'[一-龯ァ-ン]')
-    for i, text in enumerate(texts):
-        if has_kanji_or_katakana.search(text):
-            words_to_convert.append({"index": i, "word": text})
+    words_to_convert = []
+    for idx, word in enumerate(texts):
+        if has_kanji_or_katakana.search(word):
+            words_to_convert.append(word)
+            sentence_in_hypertext += f'<span id="{idx}">{word}</span>'
 
-    if not words_to_convert:
-        return [re.sub(r'[^ぁ-ん]', '', text) for text in texts]
+    if len(words_to_convert) == 0:
+        return [re.sub(r'[^ぁ-ん]', '', text) for text in texts] # 清除所有非平假名的对象
 
-    # 2. 【核心修改】将所有规则和角色定义放入 System Prompt
     system_prompt = (
-        "You are a highly precise Japanese linguistic processor. Your task is to provide the correct hiragana readings for a given list of words, based on the full sentence context provided.\n"
+        "You are a highly precise Japanese linguistic processor. Your mission is to identify words encapsulated in `<span id='...'>` tags within a given Japanese sentence and provide their correct hiragana readings based on the context.\n"
         "RULES:\n"
-        "1. Your response MUST be a single valid JSON object with a key `\"results\"`.\n"
-        "2. The `\"results\"` value must be an array of objects.\n"
-        "3. Each object must have two keys: `\"index\"` (the original index) and `\"output\"` (the resulting hiragana string).\n"
-        "4. The number of objects in the `\"results\"` array must exactly match the number of objects in the input `words_to_convert` array."
+        "1. The user will provide a sentence where target words are marked like this: `<span id=\"N\">word</span>`, where 'N' is a unique, ascending integer ID.\n"
+        "2. Your response MUST be a single, valid JSON object and nothing else. Do not add any explanatory text before or after the JSON.\n"
+        "3. The JSON object must have a single root key: `\"results\"`.\n"
+        "4. The value of `\"results\"` must be an array of objects.\n"
+        "5. Each object in the array corresponds to exactly one `<span>` tag from the input sentence.\n"
+        "6. Each object MUST contain exactly three keys:\n"
+        "   - `\"id\"`: The integer ID extracted directly from the `id=\"N\"` attribute of the span tag.\n"
+        "   - `\"word\"`: The original text content copied exactly from within the corresponding `<span>` tag.\n"
+        "   - `\"hiragana\"`: The contextually appropriate hiragana reading for the `word`.\n"
+        "7. The number of objects in the `\"results\"` array must EXACTLY match the total number of `<span>` tags in the user's input."
     )
     
     # 3. 【核心修改】构建多轮对话历史作为 Few-shot 示例
     # 示例的用户输入
-    example_context = "今日は放課後みんなで練習する日だから、スコア忘れないようにしないと"
-    example_words_to_convert = [
-        {"index": 0, "word": "今日"}, {"index": 2, "word": "放課後"},
-        {"index": 6, "word": "練習"}, {"index": 8, "word": "日"},
-        {"index": 11, "word": "スコア"}, {"index": 12, "word": "忘れ"}
-    ]
-    example_user_prompt = (
-        f"CONTEXT: \"{example_context}\"\n"
-        f"WORDS TO CONVERT: {json.dumps(example_words_to_convert, ensure_ascii=False)}"
-    )
-    # 示例的助手（模型）应答
+    # example_context = '<span id="1">今日</span>は<span id="2">放課後</span>みんなで</span>は<span id="3">練習</span>する<span id="4">日</span>だから、スコア<span id="5">忘</span>れないようにしないと'
+    # example_user_prompt = example_context
+    # # 示例的助手（模型）应答
+    # example_assistant_response = json.dumps(
+    #     {
+    #         "results": [
+    #             {"id": 1, "word": "今日", "hiragana": "きょう"},
+    #             {"id": 2, "word": "放課後", "hiragana": "ほうかご"},
+    #             {"id": 3, "word": "練習", "hiragana": "れんしゅう"},
+    #             {"id": 4, "word": "日", "hiragana": "ひ"},
+    #             {"id": 5, "word": "忘", "hiragana": "わすれ"}
+    #         ]
+    #     }, ensure_ascii=False
+    # )
+
+    example_user_prompt = '京都で<span id="3">夏目</span><span id="4">漱</span><span id="5">石</span>と<span id="7">申す</span><span id="8">方</span>は、<span id="11">紅葉</span>の<span id="13">様子</span>を<span id="15">纏</span>めた<span id="17">報告</span>を、<span id="20">僅</span>か<span id="22">十分</span>で<span id="24">仕上げ</span>ると<span id="27">高言</span>した'
     example_assistant_response = json.dumps(
-        {
-            "results": [
-                {"index": 0, "output": "きょう"}, {"index": 2, "output": "ほうかご"},
-                {"index": 6, "output": "れんしゅう"}, {"index": 8, "output": "ひ"},
-                {"index": 11, "output": "すこあ"}, {"index": 12, "output": "わすれ"}
+    {
+        "results": [
+                {"id": 3, "word": "夏目", "hiragana": "なつめ"},
+                {"id": 4, "word": "漱", "hiragana": "そう"},
+                {"id": 5, "word": "石", "hiragana": "せき"},
+                {"id": 7, "word": "申す", "hiragana": "もうす"},
+                {"id": 8, "word": "方", "hiragana": "かた"},
+                {"id": 11, "word": "紅葉", "hiragana": "もみじ"},
+                {"id": 13, "word": "様子", "hiragana": "ようす"},
+                {"id": 15, "word": "纏", "hiragana": "まと"},
+                {"id": 17, "word": "報告", "hiragana": "ほうこく"},
+                {"id": 20, "word": "僅", "hiragana": "わず"},
+                {"id": 24, "word": "仕上げ", "hiragana": "しあげ"},
+                {"id": 27, "word": "高言", "hiragana": "こうげん"}
             ]
         }, ensure_ascii=False
     )
 
     # 实际任务的用户输入
-    full_context_paragraph = "".join(texts)
     actual_user_prompt = (
-        f"CONTEXT: \"{full_context_paragraph}\"\n"
-        f"WORDS TO CONVERT: {json.dumps(words_to_convert, ensure_ascii=False)}"
+        sentence_in_hypertext
     )
 
     # 将上述内容组合成一个对话历史
@@ -192,13 +212,18 @@ def llm_normalize(
             # 5. 本地重组 (逻辑不变)
             reconstructed_list = list(texts) 
             for part in normalized_parts:
-                if isinstance(part, dict) and "index" in part and "output" in part:
-                    original_index = part["index"]
-                    hiragana_output = part["output"]
-                    if 0 <= original_index < len(reconstructed_list):
-                        reconstructed_list[original_index] = hiragana_output
+                if isinstance(part, dict) and "id" in part and "word" in part and "hiragana":
+                    idx = part["id"]
+                    original_word = part["word"]
+                    if idx >= len(texts):
+                        raise IndexError("LLM 返回 idx 的值出错，列表越界")
+                    if texts[idx] != original_word:
+                        raise ValueError("LLM 返回的 word 值与原词不一致")
+                    hiragana = part["hiragana"]
+                    if 0 <= idx < len(reconstructed_list):
+                        reconstructed_list[idx] = hiragana
                 else:
-                    raise ValueError("LLM 响应中的条目格式不正确")
+                    raise ValueError("LLM 响应中的条目格式不正确：列表元素不为 dict 或缺少相应的键")
 
             print(f"LLM 多轮对话标准化成功。")
             cleaned_results = [re.sub(r'[^ぁ-ん]', '', text) for text in reconstructed_list]
