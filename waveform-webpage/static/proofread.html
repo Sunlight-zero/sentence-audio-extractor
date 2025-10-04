@@ -28,12 +28,10 @@
              <button id="load-manual-files-btn" class="button">加载文件</button>
          </div>
 
-        <!-- 句子选择器 -->
         <div id="sentence-selector-card" class="hidden">
             <h2>选择要校对的句子</h2>
             <div id="sentence-list">
-                    <!-- JS动态填充 -->
-            </div>
+                    </div>
         </div>
 
         <div id="corrector-ui" class="hidden">
@@ -54,6 +52,8 @@
                     <button id="play-selection-btn">▶️ 播放选区</button>
                     <button id="confirm-clip-btn">✅ 确认此音频</button>
                     <button id="ignore-clip-btn">❌ 忽略此句子</button>
+                    <button id="prev-sentence-btn">⬅️ 上一句</button>
+                    <button id="next-sentence-btn">➡️ 下一句</button>
                 </div>
             </div>
         </div>
@@ -61,7 +61,6 @@
         <div id="package-container" class="hidden">
             <h2>完成并上传</h2>
             <p>当所有需要的句子都校对并确认为 "✔ 已确认" 后，点击下方按钮将音频直接上传到 Anki，或选择打包下载。</p>
-            <!-- --- 新增/修改 按钮 --- -->
             <div class="final-actions">
                 <button id="upload-anki-btn" class="button button-primary">🚀 上传至 Anki (0 个文件)</button>
                 <button id="package-btn" class="button button-secondary">📦 生成并下载 ZIP (0 个文件)</button>

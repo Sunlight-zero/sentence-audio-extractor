@@ -22,6 +22,8 @@ document.addEventListener('DOMContentLoaded', function () {
     const manualVideoInput = document.getElementById('manualVideoFiles'); // 修改为多文件
     const manualJsonInput = document.getElementById('manualJsonFile');
     const uploadAnkiBtn = document.getElementById('upload-anki-btn'); // 新增
+    const prevSentenceBtn = document.getElementById('prev-sentence-btn'); // 新增
+    const nextSentenceBtn = document.getElementById('next-sentence-btn'); // 新增
 
     // --- 全局状态变量 ---
     let wavesurfer = null;
@@ -43,6 +45,8 @@ document.addEventListener('DOMContentLoaded', function () {
         packageBtn.addEventListener('click', handlePackaging);
         uploadAnkiBtn.addEventListener('click', handleUploadToAnki); // 新增
         loadManualBtn.addEventListener('click', handleManualLoad);
+        prevSentenceBtn.addEventListener('click', handlePrevSentence); // 新增
+        nextSentenceBtn.addEventListener('click', handleNextSentence); // 新增
 
         const params = new URLSearchParams(window.location.search);
         const jsonUrl = params.get('json_url');
@@ -174,15 +178,12 @@ document.addEventListener('DOMContentLoaded', function () {
         
         currentClipId = clip.id;
         correctorUI.classList.remove('hidden');
-        // updateStatus(`正在加载视频: ${clip.original_video_filename}`, 'loading'); // 修改：从此位置移除
         currentSentenceTitle.textContent = `正在校对: "${clip.sentence}"`;
         
-        // --- 使用可靠的状态变量来判断是否需要重新加载视频 ---
         if (currentLoadedVideoFilename !== clip.original_video_filename) {
             updateStatus(`正在加载视频: ${clip.original_video_filename}`, 'loading'); // 修改：移动到此位置
             console.log(`需要切换视频源: 从 '${currentLoadedVideoFilename}' 到 '${clip.original_video_filename}'`);
             let videoUrl;
-            // 检查是自动加载模式还是手动加载模式
             if (manualVideoFilesMap.size > 0) {
                 const file = manualVideoFilesMap.get(clip.original_video_filename);
                 if (!file) {
@@ -198,9 +199,10 @@ document.addEventListener('DOMContentLoaded', function () {
             currentLoadedVideoFilename = clip.original_video_filename; 
             updateStatus(`视频 ${clip.original_video_filename} 加载完成`, 'success');
         } else {
-            // 新增：在同一个视频内切换时，也提供状态反馈
             updateStatus(`已切换到句子: "${clip.sentence}"`, 'info');
         }
+
+        updateNavigationButtons(); // 新增：更新导航按钮状态
 
         // 视频加载完成后再操作 Region
         regionsPlugin.clearRegions();
@@ -300,6 +302,33 @@ document.addEventListener('DOMContentLoaded', function () {
         updateActionButtons();
     }
     
+    // --- 新增: 导航功能 ---
+    function handlePrevSentence() {
+        if (!currentClipId || !analysisData) return;
+        const currentIndex = analysisData.clips.findIndex(c => c.id === currentClipId);
+        if (currentIndex > 0) {
+            const prevClip = analysisData.clips[currentIndex - 1];
+            const prevItemElement = document.getElementById(`item-${prevClip.id}`);
+            if (prevItemElement) {
+                prevItemElement.click();
+                // prevItemElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        }
+    }
+    
+    function handleNextSentence() {
+        if (!currentClipId || !analysisData) return;
+        const currentIndex = analysisData.clips.findIndex(c => c.id === currentClipId);
+        if (currentIndex < analysisData.clips.length - 1) {
+            const nextClip = analysisData.clips[currentIndex + 1];
+            const nextItemElement = document.getElementById(`item-${nextClip.id}`);
+            if (nextItemElement) {
+                nextItemElement.click();
+                // nextItemElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        }
+    }
+
     // --- 新增: 上传到 Anki 的处理函数 ---
     async function handleUploadToAnki() {
         const clipsToUpload = Object.values(confirmedClipsData).map(data => ({
@@ -414,6 +443,18 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     // --- 辅助函数 ---
+    // 新增：更新导航按钮的可点击状态
+    function updateNavigationButtons() {
+        if (!currentClipId || !analysisData) {
+            prevSentenceBtn.disabled = true;
+            nextSentenceBtn.disabled = true;
+            return;
+        }
+        const currentIndex = analysisData.clips.findIndex(c => c.id === currentClipId);
+        prevSentenceBtn.disabled = currentIndex <= 0;
+        nextSentenceBtn.disabled = currentIndex >= analysisData.clips.length - 1;
+    }
+
     function updateClipStatusIndicator(clip, tempStatus = null) {
         const indicator = document.getElementById(`status-${clip.id}`);
         if (!indicator) return;
