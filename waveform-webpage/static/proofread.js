@@ -30,6 +30,7 @@ document.addEventListener('DOMContentLoaded', function () {
     let analysisData = null; 
     let currentClipId = null;
     let isPlayingRegion = false;
+    let currentLoadedVideoFilename = null; // 新增：用于跟踪当前加载的视频文件名
     // --- 新增: 存储已确认的片段数据，用于 Anki 上传和打包 ---
     let confirmedClipsData = {};
     // --- 新增: 存储手动上传的视频文件引用 ---
@@ -173,15 +174,13 @@ document.addEventListener('DOMContentLoaded', function () {
         
         currentClipId = clip.id;
         correctorUI.classList.remove('hidden');
-        updateStatus(`正在加载视频: ${clip.original_video_filename}`, 'loading');
+        // updateStatus(`正在加载视频: ${clip.original_video_filename}`, 'loading'); // 修改：从此位置移除
         currentSentenceTitle.textContent = `正在校对: "${clip.sentence}"`;
         
-        // 检查是否需要切换视频源
-        const currentSrc = videoElement.src.split('/').pop();
-        const requiredSrcFilename = clip.video_url.split('/').pop();
-
-        if (decodeURIComponent(currentSrc) !== decodeURIComponent(requiredSrcFilename)) {
-            console.log(`需要切换视频源: 从 '${currentSrc}' 到 '${requiredSrcFilename}'`);
+        // --- 使用可靠的状态变量来判断是否需要重新加载视频 ---
+        if (currentLoadedVideoFilename !== clip.original_video_filename) {
+            updateStatus(`正在加载视频: ${clip.original_video_filename}`, 'loading'); // 修改：移动到此位置
+            console.log(`需要切换视频源: 从 '${currentLoadedVideoFilename}' 到 '${clip.original_video_filename}'`);
             let videoUrl;
             // 检查是自动加载模式还是手动加载模式
             if (manualVideoFilesMap.size > 0) {
@@ -196,7 +195,11 @@ document.addEventListener('DOMContentLoaded', function () {
             }
             
             await wavesurfer.load(videoUrl);
+            currentLoadedVideoFilename = clip.original_video_filename; 
             updateStatus(`视频 ${clip.original_video_filename} 加载完成`, 'success');
+        } else {
+            // 新增：在同一个视频内切换时，也提供状态反馈
+            updateStatus(`已切换到句子: "${clip.sentence}"`, 'info');
         }
 
         // 视频加载完成后再操作 Region
