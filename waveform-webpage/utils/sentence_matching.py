@@ -12,7 +12,6 @@ from typing import List, Dict, Optional, Any, Tuple
 import multiprocessing
 from faster_whisper import WhisperModel
 from faster_whisper.transcribe import Word
-from pydub import AudioSegment
 from thefuzz import fuzz
 import pykakasi
 import mojimoji
@@ -274,20 +273,55 @@ def find_best_match_in_words(
     }
 
 # ==============================================================================
-# 4. 最终裁剪函数 (无变动)
+# 4. 最终裁剪函数 (FFmpeg 加速)
 # ==============================================================================
 def finalize_clip(source_path: str, start_time: float, end_time: float, output_path: str) -> bool:
-    """根据时间戳裁剪音频。"""
-    print(f"\n--- 音频裁剪模块 ---")
+    """
+    使用 FFmpeg 直接裁剪音频，避免加载整个文件。
+    以此修复 pydub 加载整个大文件导致的缓慢进程
+    """
+    print(f"\n--- FFmpeg 快速裁剪模块 ---")
     print(f"正在从 '{os.path.basename(source_path)}' 裁剪: {start_time:.3f}s -> {end_time:.3f}s")
+
     try:
-        audio = AudioSegment.from_file(source_path)
-        clipped_audio = audio[int(start_time * 1000):int(end_time * 1000)]
-        clipped_audio.export(output_path, format="wav")
+        # 计算需要裁剪的持续时间
+        duration = end_time - start_time
+        if duration <= 0:
+            print("错误：结束时间必须大于开始时间。")
+            return False
+
+        # 构建 FFmpeg 命令
+        # -ss [start_time]: 定位到开始时间 (放在 -i 前面可以实现快速寻址)
+        # -i [source_path]: 输入文件
+        # -t [duration]: 从开始时间起，处理多长的音频
+        # -vn: 忽略视频流
+        # -acodec pcm_s16le: 输出为标准的 WAV 格式 (16-bit PCM)
+        # -y: 如果输出文件已存在，则自动覆盖
+        # -hide_banner -loglevel error: 精简输出，只显示错误信息
+        command = [
+            'ffmpeg',
+            '-hide_banner', '-loglevel', 'error',
+            '-ss', str(start_time),
+            '-i', source_path,
+            '-t', str(duration),
+            '-vn',
+            '-acodec', 'pcm_s16le',
+            '-y',
+            output_path
+        ]
+
+        # 执行命令
+        subprocess.run(command, check=True, capture_output=True, text=True)
+
         print(f"成功保存到: {output_path}")
         return True
+    except subprocess.CalledProcessError as e:
+        # 如果 FFmpeg 返回非零退出码，说明出错了
+        print(f"FFmpeg 裁剪错误: {e.stderr}")
+        return False
     except Exception as e:
-        print(f"裁剪错误: {e}")
+        # 捕获其他可能的错误，如文件未找到
+        print(f"执行裁剪时发生未知错误: {e}")
         return False
 
 # ==============================================================================
