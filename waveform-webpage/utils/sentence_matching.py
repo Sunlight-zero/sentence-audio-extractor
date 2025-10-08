@@ -27,7 +27,7 @@ except ImportError:
 
 
 SUPPRESS_TOKEN_FILE = r"D:\program\Python\auto-workflows\stt-backup\stt-test\prevent-kanji-stt\kanji_tokens.txt"
-PROMPT = "いかの たいわは ぜんぶ ひらがなか カタカナで アウトプットして ください。プロンプトの ように しゅつりょくして ください。"
+PROMPT = "いかの たいわは ぜんぶ ひらがなか カタカナで アウトプットして ください。かんじは ぜったい ダメです。では、はじめましょう。"
 
 # --- 【核心修正】将文件名清理函数移入此文件 ---
 def _sanitize_filename_part(text: str, max_length: int = 50) -> str:
