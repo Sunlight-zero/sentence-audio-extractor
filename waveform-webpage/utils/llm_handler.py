@@ -114,6 +114,8 @@ def llm_normalize(
         if has_kanji_or_katakana.search(word):
             words_to_convert.append(word)
             sentence_in_hypertext += f'<span id="{idx}">{word}</span>'
+        else:
+            sentence_in_hypertext += word
 
     if len(words_to_convert) == 0:
         return [re.sub(r'[^ぁ-ん]', '', text) for text in texts] # 清除所有非平假名的对象
@@ -164,6 +166,7 @@ def llm_normalize(
                 {"id": 15, "word": "纏", "hiragana": "まと"},
                 {"id": 17, "word": "報告", "hiragana": "ほうこく"},
                 {"id": 20, "word": "僅", "hiragana": "わず"},
+                {"id": 22, "word": "十分", "hiragana": "じっぷん"},
                 {"id": 24, "word": "仕上げ", "hiragana": "しあげ"},
                 {"id": 27, "word": "高言", "hiragana": "こうげん"}
             ]
@@ -212,7 +215,7 @@ def llm_normalize(
             # 5. 本地重组 (逻辑不变)
             reconstructed_list = list(texts) 
             for part in normalized_parts:
-                if isinstance(part, dict) and "id" in part and "word" in part and "hiragana":
+                if isinstance(part, dict) and "id" in part and "word" in part and "hiragana" in part:
                     idx = part["id"]
                     original_word = part["word"]
                     if idx >= len(texts):
