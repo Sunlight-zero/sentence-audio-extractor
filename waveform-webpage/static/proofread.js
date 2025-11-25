@@ -21,6 +21,8 @@ document.addEventListener('DOMContentLoaded', function () {
     const loadManualBtn = document.getElementById('load-manual-files-btn');
     const manualVideoInput = document.getElementById('manualVideoFiles'); // 修改为多文件
     const manualJsonInput = document.getElementById('manualJsonFile');
+    const enableTypeChangeBtn = document.getElementById('enable-type-change-checkbox');
+    const targetNoteTypeInput = document.getElementById('target-note-type-input');
     const uploadAnkiBtn = document.getElementById('upload-anki-btn'); // 新增
     const prevSentenceBtn = document.getElementById('prev-sentence-btn'); // 新增
     const nextSentenceBtn = document.getElementById('next-sentence-btn'); // 新增
@@ -354,12 +356,20 @@ document.addEventListener('DOMContentLoaded', function () {
         updateStatus(`正在上传 ${clipsToUpload.length} 个音频到 Anki...`, 'loading');
         uploadAnkiBtn.disabled = true;
         packageBtn.disabled = true;
+        let targetNoteType = null;
+        if (enableTypeChangeBtn.checked) {
+            // 为了对应文本框的默认值，这里指定了 'word-multi-stcs'
+            targetNoteType = targetNoteTypeInput.value.trim() || 'word-multi-stcs';
+        }
 
         try {
             const response = await fetch('/api/anki/upload', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ clips: clipsToUpload.filter(c => c.note_id) }) // 只发送有 note_id 的
+                body: JSON.stringify({
+                    clips: clipsToUpload.filter(c => c.note_id),
+                    target_note_type: targetNoteType
+                }) // 只发送有 note_id 的
             });
             const result = await response.json();
             if (!response.ok || !result.success) {

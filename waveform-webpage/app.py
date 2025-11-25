@@ -157,10 +157,11 @@ def upload_to_anki():
     """接收前端校对好的片段数据，并调用 anki_handler 上传。"""
     try:
         clips_to_upload = request.json.get('clips')
+        target_note_type: Optional[str] = request.json.get('target_note_type')
         if not clips_to_upload:
             return jsonify({"success": False, "error": "没有提供可上传的片段。"}), 400
         
-        anki.upload_clips_to_anki(clips_to_upload)
+        anki.upload_clips_to_anki(clips_to_upload, target_note_type=target_note_type)
         
         return jsonify({"success": True, "message": "上传任务已成功提交到 Anki。"})
     except Exception as e:

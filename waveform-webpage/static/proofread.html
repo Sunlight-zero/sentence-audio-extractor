@@ -62,6 +62,9 @@
             <h2>完成并上传</h2>
             <p>当所有需要的句子都校对并确认为 "✔ 已确认" 后，点击下方按钮将音频直接上传到 Anki，或选择打包下载。</p>
             <div class="final-actions">
+                <input type="checkbox" class="checkbox" id="enable-type-change-checkbox">
+                <!-- <label for="type-change-button">允许模板类型转换</label> -->
+                <input type="text" id="target-note-type-input" placeholder="允许模板类型转换（默认转换为 word-multi-stcs）">
                 <button id="upload-anki-btn" class="button button-primary">🚀 上传至 Anki (0 个文件)</button>
                 <button id="package-btn" class="button button-secondary">📦 生成并下载 ZIP (0 个文件)</button>
             </div>

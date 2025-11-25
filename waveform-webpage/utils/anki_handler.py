@@ -9,7 +9,7 @@ import requests
 import json
 import base64
 import os
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 import re
 # --- 【核心修正】导入 hashlib 模块用于计算哈希值 ---
 import hashlib
@@ -76,7 +76,87 @@ def extract_sentences_from_anki(path: str = "sentences", deck_name: str = "luna 
     return {"sentences_text": sentences_text, "id_to_sentence_map": id_to_sentence_map}
 
 
-def upload_clips_to_anki(clips_data: List[Dict[str, Any]], final_deck: str = "Japanese::temporary"):
+def change_note_type(note_id: int, target_type: str) -> None:
+    """修改笔记的模板类型（原地修改）"""
+
+    if target_type != "word-multi-stcs":
+        raise NotImplementedError(f"未知的目标笔记类型：{target_type}")
+
+    def get_note_info(note_ids: int) -> Dict[str, Any]:
+        """获取单个笔记信息"""
+        return_notes_list = invoke("notesInfo", notes=[note_ids])
+        assert len(return_notes_list) == 1, "获取的笔记数量不符！"
+        return invoke("notesInfo", notes=[note_ids])[0]
+
+    def extract_field(note: Dict[str, Any], field_name: str) -> str:
+        """提取笔记中的字段值"""
+        field = note["fields"].get(field_name)
+        return field["value"] if field else ""
+
+    def build_field_map() -> Dict[str, str]:
+        """构建从源模板到目标模板的字段映射"""
+        return {
+            "word": "word",
+            "rubytextHtml": "ruby",
+            "audio_for_word": "audio",
+            "etymology": "etymology",
+            "illustration": "illustration",
+            "example_sentence": "sentence1",
+            "audio_for_example_sentence": "audio_sentence1",
+            "screenshot": "screenshot1",
+            "remarks": "remark1",
+            "humanVoice": "allow_listen1",
+            "source": "source1",
+            "dictionaryInfo": "dictionaryInfo",
+            "dictionaryContent": "dictionaryContent",
+        }
+
+
+    def build_target_fields(note: Dict[str, Any]) -> Dict[str, str]:
+        """构建目标模板的字段内容"""
+        # 初始化所有目标字段为空
+        fields = {name: "" for name in [
+            "word", "ruby", "audio", "etymology", "illustration",
+            "sentence1", "audio_sentence1", "screenshot1", "remark1", "allow_listen1", "source1",
+            "sentence2", "audio_sentence2", "screenshot2", "remark2", "allow_listen2", "source2",
+            "sentence3", "audio_sentence3", "screenshot3", "remark3", "allow_listen3", "source3",
+            "sentence4", "audio_sentence4", "screenshot4", "remark4", "allow_listen4", "source4",
+            "sentence5", "audio_sentence5", "screenshot5", "remark5", "allow_listen5", "source5",
+            "sentence6", "audio_sentence6", "screenshot6", "remark6", "allow_listen6", "source6",
+            "dictionaryInfo", "dictionaryContent",
+        ]}
+
+        # 根据字段映射填充内容
+        field_map = build_field_map()
+        for source_field, target_field in field_map.items():
+            fields[target_field] = extract_field(note, source_field)
+
+        return fields
+
+    note = get_note_info(note_id)
+    fields = build_target_fields(note)
+    
+    # 准备字段映射，AnkiConnect 的 updateNoteModel 需要这个格式
+    field_map = {}
+    for source_field, target_field in build_field_map().items():
+        if source_field in note["fields"]:
+            field_map[source_field] = target_field
+
+    # 使用 updateNoteModel 原地修改笔记类型
+    invoke(
+        "updateNoteModel",
+        note={
+            "id": note_id,
+            "modelName": target_type,
+            "fields": fields,
+        }
+    )
+
+def upload_clips_to_anki(
+        clips_data: List[Dict[str, Any]], 
+        final_deck: str = "Japanese::temporary",
+        target_note_type: Optional[str] = None
+    ):
     """
     将确认后的音频片段上传到 Anki 并移动卡片。
     """
@@ -113,13 +193,14 @@ def upload_clips_to_anki(clips_data: List[Dict[str, Any]], final_deck: str = "Ja
             else:
                 pure_base64_data = audio_base64
 
-            # --- 【核心修正】使用音频内容的 SHA256 哈希值作为文件名 ---
+            # --- 【核心修正】使用句子 + 音频内容的 SHA256 哈希值作为文件名 ---
+            sentence_prefix = sentence[:20]
             # 1. 从 Base64 字符串解码为二进制数据
             audio_bytes = base64.b64decode(pure_base64_data)
             # 2. 计算 SHA256 哈希值
             sha256_hash = hashlib.sha256(audio_bytes).hexdigest()
             # 3. 创建新的文件名
-            audio_filename = f"{sha256_hash}.wav"
+            audio_filename = f"{sentence_prefix + sha256_hash}.wav"
             # --- 修正结束 ---
 
             invoke('storeMediaFile', filename=audio_filename, data=pure_base64_data)
@@ -144,6 +225,10 @@ def upload_clips_to_anki(clips_data: List[Dict[str, Any]], final_deck: str = "Ja
             else:
                 print(f"  - [警告] 未找到笔记 {note_id} 关联的卡片，无法移动。")
                 skipped_count += 1
+            
+            if target_note_type is not None:
+                change_note_type(note_id, target_note_type)
+                print(f"  - [成功] 笔记 {note_id} 的类型已更新为 {target_note_type}。")
 
         except Exception as e:
             print(f"  - [错误] 处理笔记 {note_id} 时发生错误: {e}")
