@@ -193,17 +193,21 @@ def upload_clips_to_anki(
             else:
                 pure_base64_data = audio_base64
 
-            # --- 【核心修正】使用句子 + 音频内容的 SHA256 哈希值作为文件名 ---
-            sentence_prefix = sentence[:20]
+            # --- 使用音频内容的 SHA256 哈希值作为文件名 ---
+            # sentence_prefix = sentence[:20]
             # 1. 从 Base64 字符串解码为二进制数据
             audio_bytes = base64.b64decode(pure_base64_data)
             # 2. 计算 SHA256 哈希值
             sha256_hash = hashlib.sha256(audio_bytes).hexdigest()
             # 3. 创建新的文件名
-            audio_filename = f"{sentence_prefix + sha256_hash}.wav"
-            # --- 修正结束 ---
+            expected_audio_filename = f"{sha256_hash}.wav"
 
-            invoke('storeMediaFile', filename=audio_filename, data=pure_base64_data)
+            store_result = invoke(
+                'storeMediaFile', 
+                filename=expected_audio_filename, 
+                data=pure_base64_data
+            )
+            audio_filename: str = store_result
             print(f"  - [成功] 音频文件 '{audio_filename}' 已上传。")
             
             update_payload = {
