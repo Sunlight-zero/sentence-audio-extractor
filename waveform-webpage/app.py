@@ -26,8 +26,6 @@ APP_ROOT = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_FOLDER = os.path.join(APP_ROOT, 'tmp/uploads')
 RESULTS_FOLDER = os.path.join(APP_ROOT, 'tmp/results')
 OUTPUT_FOLDER = os.path.join(APP_ROOT, 'tmp/output')
-# --- 新增 ---
-# SENTENCES_FOLDER 用于存放从 Anki 拉取的句子和 ID 映射
 SENTENCES_FOLDER = os.path.join(APP_ROOT, 'tmp/sentences')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(RESULTS_FOLDER, exist_ok=True)
@@ -36,7 +34,6 @@ os.makedirs(SENTENCES_FOLDER, exist_ok=True) # --- 新增 ---
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['RESULTS_FOLDER'] = RESULTS_FOLDER
 app.config['OUTPUT_FOLDER'] = OUTPUT_FOLDER
-# --- 新增 ---
 app.config['SENTENCES_FOLDER'] = SENTENCES_FOLDER
 
 # 使用字典来跟踪后台任务状态
@@ -326,14 +323,27 @@ def run_processing_task(
             
             audio_for_transcription = video_path
             if enable_separation:
-                # TODO: 目前音源分离函数有 Bug，直接禁止运行
-                raise NotImplementedError("目前不可以分离音频")
+                tasks[task_id]["message"] = f"[分离中] {original_filename}: 正在提取人声..."
+                # --- 【关键修改】使用 Task ID 和文件名创建唯一的输出目录 ---
+                video_base_name = os.path.splitext(original_filename)[0]
+                sep_output_dir = os.path.join(app.config['OUTPUT_FOLDER'], 'separated', task_id, video_base_name)
+                
+                # 调用 sentence_matching 中的分离函数
+                vocals_path = sm.separate_vocals(video_path, output_dir=sep_output_dir)
+                
+                if vocals_path and os.path.exists(vocals_path):
+                    audio_for_transcription = vocals_path
+                    clip_source = vocals_path # 如果分离成功，后续裁剪将使用纯人声
+                    print(f"音源分离成功: {vocals_path}")
+                else:
+                    print(f"警告: {original_filename} 音源分离失败，继续使用原音频。")
             
             tasks[task_id]["message"] = f"[转写 {i+1}/{len(video_paths)}] {original_filename}: 正在识别..."
             # --- 【核心修改】调用解耦后的函数，不执行标准化 ---
             transcription_result = sm.transcribe_and_normalize_audio(
                 audio_path=audio_for_transcription,
-                model_path="medium", device="cuda", compute_type="float16",
+                model_path=r"D:\ACGN\gal\whisper\models\faster-whisper-medium",
+                device="cuda", compute_type="float16",
                 perform_normalization=False
             )
             

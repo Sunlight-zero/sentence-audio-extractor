@@ -168,7 +168,7 @@ def _transcribe_audio_worker(
             print("子进程: 标准化完成。")
             queue.put((all_words, normalized_word_texts))
         else:
-            print("子进程: 转写完成，跳过标准化。")
+            print("子进程: 转写完成。")
             queue.put((all_words, None)) # 保持元组结构，第二个元素为 None
 
     except Exception as e:
@@ -354,7 +354,7 @@ def find_best_match_for_all_sentences(
             print(f"  -> 成功匹配: '{sentence[:20]}...' (得分: {match_result['score']})")
             safe_id_part = _sanitize_filename_part(sentence[:20], max_length=20)
             all_results.append({
-                "id": f"clip-{safe_id_part}-{int(time.time())}",
+                "id": f"clip-{safe_id_part}-{time.time():.8f}",
                 "sentence": sentence,
                 "predicted_start": round(match_result['start_timestamp'], 3),
                 "predicted_end": round(match_result['end_timestamp'], 3),
