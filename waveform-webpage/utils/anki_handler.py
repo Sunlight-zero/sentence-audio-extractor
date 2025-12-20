@@ -34,7 +34,11 @@ def invoke(action, **params):
     except requests.exceptions.RequestException as e:
         raise Exception(f"无法连接到 AnkiConnect。请确保 Anki 正在运行并且 AnkiConnect 插件已安装。\n错误详情: {e}")
 
-def extract_sentences_from_anki(path: str = "sentences", deck_name: str = "luna temporary") -> Dict[str, Any]:
+def extract_sentences_from_anki(
+        path: str = "sentences",
+        deck_name: str = "luna temporary",
+        field_names: List[str] = ["example_sentence", "sentence1"]
+    ) -> Dict[str, Any]:
     """
     从指定的 Anki 牌组中提取没有音频的例句。
     """
@@ -54,11 +58,14 @@ def extract_sentences_from_anki(path: str = "sentences", deck_name: str = "luna 
     for note in notes_info:
         note_id = note['noteId']
         fields = note['fields']
+
+        for field_name in field_names:
+            if field_name in fields and fields[field_name]['value']:
+                break
+        else:
+            continue # 继续 notes_info 的循环
         
-        if 'example_sentence' not in fields or not fields['example_sentence']['value']:
-            continue
-        
-        sentence = fields['example_sentence']['value']
+        sentence = fields[field_name]['value']
         sentence = sentence.replace("<b>", "").replace("</b>", "").replace("<br>", " ").strip()
         
         if sentence:
