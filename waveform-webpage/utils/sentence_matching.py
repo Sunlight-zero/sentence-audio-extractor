@@ -142,6 +142,9 @@ def _transcribe_audio_worker(
             language="ja", 
             word_timestamps=True,
             initial_prompt=prompt,
+            condition_on_previous_text=False,
+            # vad_filter=True,
+            # vad_parameters=dict(min_silence_duration_ms=500),
             **kwargs
         )
         all_words: List[Word] = []
@@ -275,10 +278,14 @@ def find_best_match_in_words(
 # ==============================================================================
 # 4. 最终裁剪函数 (FFmpeg 加速)
 # ==============================================================================
-def finalize_clip(source_path: str, start_time: float, end_time: float, output_path: str) -> bool:
+def finalize_clip(
+    source_path: str, start_time: float, end_time: float, output_path: str,
+    balance_volume: bool = False,
+    volume_i: float = -19.1, volume_lra: float = 11, volume_tp = -1.5,
+) -> bool:
     """
-    使用 FFmpeg 直接裁剪音频，避免加载整个文件。
-    以此修复 pydub 加载整个大文件导致的缓慢进程
+    使用 FFmpeg 直接裁剪音频
+    同时完成音量平衡操作
     """
     print(f"\n--- FFmpeg 快速裁剪模块 ---")
     print(f"正在从 '{os.path.basename(source_path)}' 裁剪: {start_time:.3f}s -> {end_time:.3f}s")
@@ -289,6 +296,11 @@ def finalize_clip(source_path: str, start_time: float, end_time: float, output_p
         if duration <= 0:
             print("错误：结束时间必须大于开始时间。")
             return False
+
+        if balance_volume:
+            clip_output_path = os.path.splitext(output_path)[0] + "_clipped.wav"
+        else:
+            clip_output_path = output_path
 
         # 构建 FFmpeg 命令
         # -ss [start_time]: 定位到开始时间 (放在 -i 前面可以实现快速寻址)
@@ -307,17 +319,30 @@ def finalize_clip(source_path: str, start_time: float, end_time: float, output_p
             '-vn',
             '-acodec', 'pcm_s16le',
             '-y',
-            output_path
+            clip_output_path
         ]
 
         # 执行命令
         subprocess.run(command, check=True, capture_output=True, text=True)
 
+        if balance_volume:
+            balance_volume_cmd = [
+                'ffmpeg',
+                "-y",               # Overwrite temp file if exists
+                "-i", clip_output_path,
+                "-filter:a", f"loudnorm=I={volume_i}:LRA={volume_lra}:TP={volume_tp}",
+                "-vn",              # No video
+                output_path
+            ]
+            subprocess.run(
+                balance_volume_cmd, check=True, capture_output=True, text=True,encoding='utf-8'
+            )
+
         print(f"成功保存到: {output_path}")
         return True
     except subprocess.CalledProcessError as e:
         # 如果 FFmpeg 返回非零退出码，说明出错了
-        print(f"FFmpeg 裁剪错误: {e.stderr}")
+        print(f"FFmpeg 裁剪或平衡音量错误: {e.stderr}")
         return False
     except Exception as e:
         # 捕获其他可能的错误，如文件未找到

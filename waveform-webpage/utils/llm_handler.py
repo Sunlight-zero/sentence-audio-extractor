@@ -99,7 +99,7 @@ def _extract_hiragana(text: str) -> set:
 
 def llm_normalize(
     texts: List[str], 
-    max_retries: int = 3
+    max_retries: int = 0
 ) -> List[str]:
     """
     【多轮对话优化版】使用 LLM 将日文文本列表高效标准化为平假名。
@@ -121,18 +121,18 @@ def llm_normalize(
         return [re.sub(r'[^ぁ-ん]', '', text) for text in texts] # 清除所有非平假名的对象
 
     system_prompt = (
-        "You are a highly precise Japanese linguistic processor. Your mission is to identify words encapsulated in `<span id='...'>` tags within a given Japanese sentence and provide their correct hiragana readings based on the context.\n"
-        "RULES:\n"
-        "1. The user will provide a sentence where target words are marked like this: `<span id=\"N\">word</span>`, where 'N' is a unique, ascending integer ID.\n"
-        "2. Your response MUST be a single, valid JSON object and nothing else. Do not add any explanatory text before or after the JSON.\n"
-        "3. The JSON object must have a single root key: `\"results\"`.\n"
-        "4. The value of `\"results\"` must be an array of objects.\n"
-        "5. Each object in the array corresponds to exactly one `<span>` tag from the input sentence.\n"
-        "6. Each object MUST contain exactly three keys:\n"
-        "   - `\"id\"`: The integer ID extracted directly from the `id=\"N\"` attribute of the span tag.\n"
-        "   - `\"word\"`: The original text content copied exactly from within the corresponding `<span>` tag.\n"
-        "   - `\"hiragana\"`: The contextually appropriate hiragana reading for the `word`.\n"
-        "7. The number of objects in the `\"results\"` array must EXACTLY match the total number of `<span>` tags in the user's input."
+        "あなたは極めて精度の高い日本語言語処理システムです。あなたの任務は、提供された日本語の文章内で `<span id='...'>` タグに囲まれた単語を特定し、文脈に基づいて正しい「平仮名の読み」を提供することです。\n"
+        "【ルール】\n"
+        "1. ユーザーは、対象の単語が `<span id=\"N\">単語</span>` のようにマークされた文章を入力します（Nは一意の昇順の整数ID）。\n"
+        "2. あなたの回答は、単一の有効なJSONオブジェクトのみにしてください。JSONの前後に説明文やMarkdownタグを一切含めないでください。\n"
+        "3. JSONオブジェクトは、単一のルートキー `\"results\"` を持つ必要があります。\n"
+        "4. `\"results\"` の値は、オブジェクトの配列（リスト）でなければなりません。\n"
+        "5. 配列内の各オブジェクトは、入力文中の `<span>` タグ1つと正確に対応します。\n"
+        "6. 各オブジェクトは、以下の3つのキーを必ず含む必要があります：\n"
+        "   - `\"id\"`: spanタグの `id=\"N\"` 属性から抽出した整数ID。\n"
+        "   - `\"word\"`: 対応する `<span>` タグ内の元のテキスト内容（完全なコピー）。\n"
+        "   - `\"hiragana\"`: その `word` の文脈に即した適切な平仮名の読み。\n"
+        "7. `\"results\"` 配列内のオブジェクト数は、ユーザー入力内の `<span>` タグの総数と完全に一致させてください。"
     )
     
     # 3. 【核心修改】构建多轮对话历史作为 Few-shot 示例

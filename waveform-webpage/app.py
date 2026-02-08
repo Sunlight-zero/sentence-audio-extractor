@@ -7,18 +7,15 @@ from flask import Flask, jsonify, request, send_from_directory, url_for
 from werkzeug.utils import secure_filename
 from waitress import serve
 import threading
-# --- 【新增】导入并行处理所需的库 ---
 import queue
 import concurrent.futures
 from typing import List, Dict, Set, Any, Tuple, Optional
+import hashlib
+from types import SimpleNamespace
 
 # 确保 utils 目录在 Python 路径中
 import utils.sentence_matching as sm
-# --- 新增 ---
-# 导入新的 Anki 处理模块
 import utils.anki_handler as anki
-# --- 【核心修改】移除不再需要的直接导入 ---
-
 
 # --- Flask 应用初始化与目录配置 ---
 app = Flask(__name__, static_folder='static', static_url_path='')
@@ -27,17 +24,85 @@ UPLOAD_FOLDER = os.path.join(APP_ROOT, 'tmp/uploads')
 RESULTS_FOLDER = os.path.join(APP_ROOT, 'tmp/results')
 OUTPUT_FOLDER = os.path.join(APP_ROOT, 'tmp/output')
 SENTENCES_FOLDER = os.path.join(APP_ROOT, 'tmp/sentences')
+CACHE_FOLDER = os.path.join(APP_ROOT, "tmp/cache")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(RESULTS_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
-os.makedirs(SENTENCES_FOLDER, exist_ok=True) # --- 新增 ---
+os.makedirs(SENTENCES_FOLDER, exist_ok=True)
+os.makedirs(CACHE_FOLDER, exist_ok=True)
+
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['RESULTS_FOLDER'] = RESULTS_FOLDER
 app.config['OUTPUT_FOLDER'] = OUTPUT_FOLDER
 app.config['SENTENCES_FOLDER'] = SENTENCES_FOLDER
+app.config['CACHE_FOLDER'] = CACHE_FOLDER
 
 # 使用字典来跟踪后台任务状态
 tasks = {}
+
+# ==============================================================================
+# 工具函数：缓存与哈希
+# ==============================================================================
+
+def calculate_sha256(file_path: str) -> str:
+    """计算文件的全量 SHA256 哈希值。"""
+    sha256_hash = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        # 按块读取以优化内存，但计算的是全量
+        for byte_block in iter(lambda: f.read(4096), b""):
+            sha256_hash.update(byte_block)
+    return sha256_hash.hexdigest()
+
+def save_transcription_cache(cache_path: str, all_words: List[Any], norm_words: List[str]):
+    """
+    将转写结果（原始 Word 对象列表）和标准化结果保存到 JSON。
+    需要将 Word 对象转换为字典才能序列化。
+    """
+    serializable_words = []
+    for w in all_words:
+        # 提取 Word 对象中的关键属性
+        serializable_words.append({
+            "start": w.start,
+            "end": w.end,
+            "word": w.word,
+            "probability": getattr(w, 'probability', 0)
+        })
+    
+    data = {
+        "all_words": serializable_words,
+        "norm_words": norm_words
+    }
+    
+    try:
+        with open(cache_path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+        print(f"[Cache] 已保存转写记录: {os.path.basename(cache_path)}")
+    except Exception as e:
+        print(f"[Cache] 保存失败: {e}")
+
+def load_transcription_cache(cache_path: str) -> Optional[Tuple[List[Any], List[str]]]:
+    """
+    从 JSON 加载缓存，并将字典列表重建为带有 start/end/word 属性的对象列表。
+    """
+    try:
+        with open(cache_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        raw_words = data.get("all_words", [])
+        norm_words = data.get("norm_words", [])
+        
+        # 重建对象，确保 sentence_matching.py 中的 obj.start / obj.end 调用正常工作
+        reconstructed_words = []
+        for w_dict in raw_words:
+            # 使用 SimpleNamespace 创建一个轻量级对象
+            obj = SimpleNamespace(**w_dict)
+            reconstructed_words.append(obj)
+            
+        print(f"[Cache] 命中缓存: {os.path.basename(cache_path)}")
+        return reconstructed_words, norm_words
+    except Exception as e:
+        print(f"[Cache] 读取失败或文件损坏: {e}")
+        return None
 
 # ==============================================================================
 # 页面服务路由
@@ -134,7 +199,8 @@ def clip_audio():
             source_path=clip_source_path,
             start_time=float(start_time),
             end_time=float(end_time),
-            output_path=output_path
+            output_path=output_path,
+            balance_volume=True
         )
         
         if success:
@@ -217,8 +283,11 @@ def run_processing_task(
 
         # --- 【核心修改】定义三级流水线的队列 ---
         # 队列1：Whisper -> LLM
+        # 队列元素结构: (video_path, all_words, clip_source_path, cache_path_to_save)
         transcription_queue: queue.Queue = queue.Queue(maxsize=os.cpu_count() or 1)
+        
         # 队列2：LLM -> Matcher
+        # 队列元素结构: (video_path, all_words, norm_words, clip_source_path)
         matching_queue: queue.Queue = queue.Queue(maxsize=os.cpu_count() or 1)
         
         remaining_sentences_map: Optional[Dict[str, str]] = None
@@ -229,18 +298,24 @@ def run_processing_task(
 
         # 【新增】消费者1 / 生产者2: LLM 标准化工作线程
         def llm_normalization_worker():
-            """消费来自 Whisper 的结果，执行 LLM 标准化，然后生产给匹配器。"""
+            """消费来自 Whisper 的结果，执行 LLM 标准化，保存缓存，然后生产给匹配器。"""
             while True:
                 task_item = transcription_queue.get()
                 if task_item is None:
                     break
                 
-                video_path, all_words, clip_source_path = task_item
+                # 解包包含 cache_path 的新结构
+                video_path, all_words, clip_source_path, cache_save_path = task_item
                 try:
                     if all_words:
                         tasks[task_id]["message"] = f"[标准化中] {os.path.basename(video_path)} 的转写稿..."
-                        # --- 【核心修改】调用 sm.normalize_words 封装函数 ---
+                        # 调用 sm.normalize_words 封装函数
                         norm_words = sm.normalize_words(all_words, method="llm")
+                        
+                        # --- 【新增】保存缓存 ---
+                        if cache_save_path:
+                             save_transcription_cache(cache_save_path, all_words, norm_words)
+
                         matching_queue.put((video_path, all_words, norm_words, clip_source_path))
                     else:
                         # 如果没有识别结果，也放入一个空任务以保持流程
@@ -312,7 +387,7 @@ def run_processing_task(
         for t in llm_threads: t.start()
         for t in matcher_threads: t.start()
 
-        # --- 4. 主线程作为生产者1，串行执行GPU任务 (Whisper) ---
+        # --- 4. 主线程作为生产者1，串行执行GPU任务 (Whisper) + 缓存检查 ---
         for i, video_path in enumerate(video_paths):
             with lock:
                 if remaining_sentences_map is not None and not remaining_sentences_map:
@@ -321,40 +396,61 @@ def run_processing_task(
             
             original_filename = os.path.basename(video_path)
             
-            audio_for_transcription = video_path
-            if enable_separation:
-                tasks[task_id]["message"] = f"[分离中] {original_filename}: 正在提取人声..."
-                # --- 【关键修改】使用 Task ID 和文件名创建唯一的输出目录 ---
-                video_base_name = os.path.splitext(original_filename)[0]
-                sep_output_dir = os.path.join(app.config['OUTPUT_FOLDER'], 'separated', task_id, video_base_name)
-                
-                # 调用 sentence_matching 中的分离函数
-                vocals_path = sm.separate_vocals(video_path, output_dir=sep_output_dir)
-                
-                if vocals_path and os.path.exists(vocals_path):
-                    audio_for_transcription = vocals_path
-                    clip_source = vocals_path # 如果分离成功，后续裁剪将使用纯人声
-                    print(f"音源分离成功: {vocals_path}")
-                else:
-                    print(f"警告: {original_filename} 音源分离失败，继续使用原音频。")
+            # --- 【新增】缓存检查逻辑 ---
+            tasks[task_id]["message"] = f"[校验中] {original_filename}: 计算哈希以检查缓存..."
+            file_hash = calculate_sha256(video_path)
             
-            tasks[task_id]["message"] = f"[转写 {i+1}/{len(video_paths)}] {original_filename}: 正在识别..."
-            # --- 【核心修改】调用解耦后的函数，不执行标准化 ---
-            transcription_result = sm.transcribe_and_normalize_audio(
-                audio_path=audio_for_transcription,
-                model_path=r"D:\ACGN\gal\whisper\models\faster-whisper-medium",
-                device="cuda", compute_type="float16",
-                perform_normalization=False
-            )
+            # 根据是否启用分离决定缓存后缀
+            cache_suffix = "-separated" if enable_separation else ""
+            cache_filename = f"{file_hash}{cache_suffix}.json"
+            cache_path = os.path.join(app.config['CACHE_FOLDER'], cache_filename)
             
-            if transcription_result:
-                all_words, _ = transcription_result # 第二个返回值为 None
-                clip_source = video_path # 简化 clip_source 逻辑
-                transcription_queue.put((video_path, all_words, clip_source))
+            # 默认 clip_source 始终为原视频 (clip_source: 最终裁剪用的视频)
+            clip_source = video_path 
+            
+            # 1. 首先尝试加载缓存
+            cache_data = None
+            if os.path.exists(cache_path):
+                tasks[task_id]["message"] = f"[缓存命中] {original_filename}: 加载历史转写记录..."
+                cache_data = load_transcription_cache(cache_path)
+            
+            if cache_data:
+                # 缓存命中：直接发送给匹配队列（跳过 Demucs 分离、Whisper 转写和 LLM 线程）
+                cached_all_words, cached_norm_words = cache_data
+                matching_queue.put((video_path, cached_all_words, cached_norm_words, clip_source))
             else:
-                print(f"警告: 视频 {original_filename} 转写失败，已跳过。")
+                # 缓存未命中：根据是否启用分离，准备转写用的音频源
+                audio_for_transcription = video_path
+                
+                # 仅当缓存未命中且启用了分离时，才执行分离
+                if enable_separation:
+                    tasks[task_id]["message"] = f"[分离中] {original_filename}: 正在提取人声..."
+                    video_base_name = os.path.splitext(original_filename)[0]
+                    sep_output_dir = os.path.join(app.config['OUTPUT_FOLDER'], 'separated', task_id, video_base_name)
+                    
+                    vocals_path = sm.separate_vocals(video_path, output_dir=sep_output_dir)
+                    if vocals_path and os.path.exists(vocals_path):
+                        audio_for_transcription = vocals_path
+                        print(f"音源分离成功，将使用人声文件进行转写: {vocals_path}")
+                    else:
+                        print(f"警告: {original_filename} 音源分离失败，继续使用原音频。")
+
+                tasks[task_id]["message"] = f"[转写 {i+1}/{len(video_paths)}] {original_filename}: 正在识别..."
+                transcription_result = sm.transcribe_and_normalize_audio(
+                    audio_path=audio_for_transcription,
+                    model_path=r"D:\ACGN\gal\whisper\models\faster-whisper-medium",
+                    device="cuda", compute_type="float16",
+                    perform_normalization=False
+                )
+                
+                if transcription_result:
+                    all_words, _ = transcription_result
+                    # 发送给 LLM 队列，并附带 cache_path 以便消费者保存
+                    transcription_queue.put((video_path, all_words, clip_source, cache_path))
+                else:
+                    print(f"警告: 视频 {original_filename} 转写失败，已跳过。")
         
-        # --- 5. 等待所有任务完成 (新的关闭顺序) ---
+        # --- 5. 等待所有任务完成 ---
         transcription_queue.join()
         for _ in range(num_cpu_consumers): transcription_queue.put(None)
         for t in llm_threads: t.join()
@@ -395,4 +491,5 @@ if __name__ == '__main__':
     port = 5000
     print(f"--- 服务器正在启动 ---")
     print(f"请在浏览器中打开: http://{host}:{port}")
-    serve(app, host=host, port=port)
+    # 增加限制：允许最大 10GB 上传，超时时间延长到 10 分钟
+    serve(app, host=host, port=port, max_request_body_size=1073741824 * 10, channel_timeout=600)
