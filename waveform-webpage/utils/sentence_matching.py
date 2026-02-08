@@ -114,6 +114,36 @@ def separate_vocals(audio_path: str, output_dir: str = "temp_separated", models_
     print("主进程: 音源分离完成。")
     return result
 
+def get_waveform_data(audio_path: str, output_dir: str) -> Optional[str]:
+    """
+    生成一个标准化的 WAV 文件 (16kHz, Mono, 16-bit) 用于前端波形渲染。
+    这能解决浏览器直接解码 Opus/MP3/AAC 时可能产生的时长不一致问题。
+    """
+    try:
+        os.makedirs(output_dir, exist_ok=True)
+        base_name = os.path.splitext(os.path.basename(audio_path))[0]
+        output_path = os.path.join(output_dir, f"{base_name}_waveform.wav")
+        
+        # 如果已存在且大小正常，直接返回
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 1024:
+            return output_path
+
+        print(f"正在生成波形数据: {output_path}")
+        command = [
+            'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
+            '-i', audio_path,
+            '-ar', '16000',      # 降采样到 16kHz 足够渲染波形，减小文件体积
+            '-ac', '1',          # 单声道
+            '-acodec', 'pcm_s16le',
+            '-map', 'a:0',       # 仅保留第一条音轨
+            output_path
+        ]
+        subprocess.run(command, check=True)
+        return output_path
+    except Exception as e:
+        print(f"生成波形数据失败: {e}")
+        return None
+
 def load_suppress_tokens(file_path):
     with open(file_path, 'r', encoding='utf-8') as f:
         return [int(token) for token in f.read().split()]

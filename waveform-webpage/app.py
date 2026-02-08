@@ -304,8 +304,8 @@ def run_processing_task(
                 if task_item is None:
                     break
                 
-                # 解包包含 cache_path 的新结构
-                video_path, all_words, clip_source_path, cache_save_path = task_item
+                # 解包包含 cache_path 和 waveform_proxy_path 的新结构
+                video_path, all_words, clip_source_path, cache_save_path, waveform_proxy_path = task_item
                 try:
                     if all_words:
                         tasks[task_id]["message"] = f"[标准化中] {os.path.basename(video_path)} 的转写稿..."
@@ -316,14 +316,14 @@ def run_processing_task(
                         if cache_save_path:
                              save_transcription_cache(cache_save_path, all_words, norm_words)
 
-                        matching_queue.put((video_path, all_words, norm_words, clip_source_path))
+                        matching_queue.put((video_path, all_words, norm_words, clip_source_path, waveform_proxy_path))
                     else:
                         # 如果没有识别结果，也放入一个空任务以保持流程
-                        matching_queue.put((video_path, [], [], clip_source_path))
+                        matching_queue.put((video_path, [], [], clip_source_path, waveform_proxy_path))
                 except Exception as e:
                     print(f"LLM 标准化线程出错 ({os.path.basename(video_path)}): {e}")
                     # 放入空任务，避免阻塞
-                    matching_queue.put((video_path, all_words, [], clip_source_path))
+                    matching_queue.put((video_path, all_words, [], clip_source_path, waveform_proxy_path))
                 finally:
                     transcription_queue.task_done()
         
@@ -336,7 +336,8 @@ def run_processing_task(
                 if task_item is None:
                     break
                 
-                video_path, all_words, norm_words, clip_source_path = task_item
+                # 解包包含 waveform_proxy_path的新结构
+                video_path, all_words, norm_words, clip_source_path, waveform_proxy_path = task_item
                 original_filename = os.path.basename(video_path)
                 
                 if not norm_words: # 如果标准化失败，则跳过
@@ -372,7 +373,19 @@ def run_processing_task(
                             if sentence in remaining_sentences_map:
                                 clip['clip_source_path'] = clip_source_path
                                 clip['original_video_filename'] = original_filename
-                                clip['video_url'] = f"/uploads/{original_filename}"
+                                clip['video_url'] = f"/uploads/{original_filename}?v={task_id[:8]}"
+                                
+                                # 构建波形文件的 URL (如果生成成功)
+                                if waveform_proxy_path:
+                                     # 需要相对于 app.py 的路径转换成 URL
+                                     # OUTPUT_FOLDER/waveforms/task_id/filename.wav -> /output/waveforms/task_id/filename.wav
+                                     rel_path = os.path.relpath(waveform_proxy_path, app.config['OUTPUT_FOLDER'])
+                                     # 统一路径分隔符为 /
+                                     rel_path = rel_path.replace(os.sep, '/')
+                                     clip['waveform_url'] = f"/output/{rel_path}"
+                                else:
+                                     clip['waveform_url'] = None
+
                                 clip['note_id'] = sentence_to_note_id.get(sentence)
                                 all_clips_results.append(clip)
                                 del remaining_sentences_map[sentence]
@@ -406,7 +419,14 @@ def run_processing_task(
             cache_path = os.path.join(app.config['CACHE_FOLDER'], cache_filename)
             
             # 默认 clip_source 始终为原视频 (clip_source: 最终裁剪用的视频)
-            clip_source = video_path 
+            clip_source = video_path
+
+            # --- 【新增】无论是否命中缓存，都准备波形代理文件 ---
+            # 这用于解决前端 WaveSurfer 与 Opus/MP4 视频对不齐的问题
+            waveform_proxy_path = sm.get_waveform_data(
+                video_path,
+                output_dir=os.path.join(app.config['OUTPUT_FOLDER'], 'waveforms', task_id)
+            )
             
             # 1. 首先尝试加载缓存
             cache_data = None
@@ -415,9 +435,10 @@ def run_processing_task(
                 cache_data = load_transcription_cache(cache_path)
             
             if cache_data:
-                # 缓存命中：直接发送给匹配队列（跳过 Demucs 分离、Whisper 转写和 LLM 线程）
+                # 缓存命中：直接发送给匹配队列
+                # 传递结构更新: (video_path, all_words, norm_words, clip_source, waveform_proxy_path)
                 cached_all_words, cached_norm_words = cache_data
-                matching_queue.put((video_path, cached_all_words, cached_norm_words, clip_source))
+                matching_queue.put((video_path, cached_all_words, cached_norm_words, clip_source, waveform_proxy_path))
             else:
                 # 缓存未命中：根据是否启用分离，准备转写用的音频源
                 audio_for_transcription = video_path
@@ -432,9 +453,14 @@ def run_processing_task(
                     if vocals_path and os.path.exists(vocals_path):
                         audio_for_transcription = vocals_path
                         print(f"音源分离成功，将使用人声文件进行转写: {vocals_path}")
+                        
+                        # 如果分离了人声，波形代理最好也用人声，这样对齐更准
+                        # 但为了稳妥（避免分离错误导致波形也坏），还是优先用原音轨生成标准 WAV
+                        # 或者：如果用户是为了校对“人声”，看到人声波形更好
+                        # 决策：保持统一，前端波形统一使用原视频生成的标准 WAV，确保与视频完全同步
                     else:
                         print(f"警告: {original_filename} 音源分离失败，继续使用原音频。")
-
+                        
                 tasks[task_id]["message"] = f"[转写 {i+1}/{len(video_paths)}] {original_filename}: 正在识别..."
                 transcription_result = sm.transcribe_and_normalize_audio(
                     audio_path=audio_for_transcription,
@@ -442,11 +468,13 @@ def run_processing_task(
                     device="cuda", compute_type="float16",
                     perform_normalization=False
                 )
-                
+
                 if transcription_result:
                     all_words, _ = transcription_result
-                    # 发送给 LLM 队列，并附带 cache_path 以便消费者保存
-                    transcription_queue.put((video_path, all_words, clip_source, cache_path))
+                    # 发送给 LLM 队列
+                    # 传递结构更新: (video_path, all_words, clip_source, cache_path, waveform_proxy_path)
+                    transcription_queue.put((video_path, all_words, clip_source, cache_path, waveform_proxy_path))
+
                 else:
                     print(f"警告: 视频 {original_filename} 转写失败，已跳过。")
         

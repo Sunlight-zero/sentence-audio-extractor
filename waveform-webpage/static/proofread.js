@@ -31,7 +31,7 @@ document.addEventListener('DOMContentLoaded', function () {
     let wavesurfer = null;
     let regionsPlugin = null;
     let activeRegion = null;
-    let analysisData = null; 
+    let analysisData = null;
     let currentClipId = null;
     let isPlayingRegion = false;
     let currentLoadedVideoFilename = null; // 新增：用于跟踪当前加载的视频文件名
@@ -80,7 +80,7 @@ document.addEventListener('DOMContentLoaded', function () {
             if (!analysisData.clips || analysisData.clips.length === 0) {
                 throw new Error('分析结果中不包含任何有效的句子片段。');
             }
-            
+
             // 如果是手动加载，使用传入的 videoFilesMap
             if (videoFilesMap) {
                 manualVideoFilesMap = videoFilesMap;
@@ -91,10 +91,10 @@ document.addEventListener('DOMContentLoaded', function () {
                 clip.proofed_start = clip.predicted_start;
                 clip.proofed_end = clip.predicted_end;
             });
-            
+
             // 初始化 WaveSurfer (但不加载媒体，等待用户选择)
             await setupWaveSurfer();
-            
+
             populateSentenceSelector(analysisData.clips);
             sentenceSelectorCard.classList.remove('hidden');
             packageContainer.classList.remove('hidden');
@@ -114,7 +114,7 @@ document.addEventListener('DOMContentLoaded', function () {
     // --- 初始化 WaveSurfer (修改为不立即加载媒体) ---
     function setupWaveSurfer() {
         if (wavesurfer) wavesurfer.destroy();
-        
+
         regionsPlugin = RegionsPlugin.create();
         wavesurfer = WaveSurfer.create({
             container: '#waveform',
@@ -140,18 +140,34 @@ document.addEventListener('DOMContentLoaded', function () {
                 wavesurfer.pause();
             }
         });
-        playSelectionBtn.onclick = () => {
+        playSelectionBtn.onclick = async () => {
             if (!activeRegion) return;
-            // 使用 activeRegion.play() 保证只播放选区
+
             if (wavesurfer.isPlaying()) {
                 wavesurfer.pause();
+                return;
+            }
+
+            // 标志着我们正在进行区域播放
+            isPlayingRegion = true;
+
+            // 如果已经在目标位置(差距极小)，直接播放；否则先 Seek 再等待 seeked 事件
+            // 这避免了 "The play() request was interrupted by a new load request" 错误
+            const targetTime = activeRegion.start;
+            if (Math.abs(videoElement.currentTime - targetTime) < 0.1) {
+                videoElement.play().catch(e => console.error("直接播放失败:", e));
             } else {
-                activeRegion.play();
+                // 先绑定一次性监听器，再 Seek
+                const onSeeked = () => {
+                    videoElement.play().catch(e => console.error("Seek后播放失败:", e));
+                };
+                videoElement.addEventListener('seeked', onSeeked, { once: true });
+                wavesurfer.setTime(targetTime);
             }
         };
         return Promise.resolve();
     }
-    
+
     // --- 填充句子选择列表 (无变动) ---
     function populateSentenceSelector(clips) {
         sentenceList.innerHTML = '';
@@ -174,19 +190,66 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
+    // --- 新增: 缓存已解码的波形数据以提高性能 ---
+    const peaksCache = new Map();
+
+    /**
+     * 从指定的 URL (通常是 WAV 文件) 获取波形数据 (Peaks)。
+     * 用于在不改变 <video> 源的情况下绘制精准波形。
+     */
+    async function getPeaksFromUrl(url) {
+        if (peaksCache.has(url)) return peaksCache.get(url);
+
+        console.log(`[Sync] 正在下载并处理波形数据: ${url}`);
+        const response = await fetch(url);
+        const arrayBuffer = await response.arrayBuffer();
+
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        try {
+            const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+            const rawData = audioBuffer.getChannelData(0);
+
+            // 降采样：每秒收集 80 个点 (40对 min/max)
+            const pointsPerSecond = 80;
+            const samplesPerPoint = Math.floor(audioBuffer.sampleRate / (pointsPerSecond / 2));
+            const peaks = [];
+
+            for (let i = 0; i < rawData.length; i += samplesPerPoint) {
+                let min = 0;
+                let max = 0;
+                for (let j = 0; j < samplesPerPoint && (i + j) < rawData.length; j++) {
+                    const v = rawData[i + j];
+                    if (v < min) min = v;
+                    if (v > max) max = v;
+                }
+                peaks.push(min, max);
+            }
+
+            console.log(`[Sync] 降采样完成: ${rawData.length} -> ${peaks.length} 点`);
+            peaksCache.set(url, peaks);
+            return peaks;
+        } finally {
+            if (audioContext.state !== 'closed') audioContext.close();
+        }
+    }
+
     // --- 为选定片段设置校对器 (核心重构) ---
     async function setupCorrectorForClip(clip) {
         if (wavesurfer.isPlaying()) wavesurfer.pause();
-        
+        isPlayingRegion = false; // 重置区域播放状态，防止跨句子干扰
+
         currentClipId = clip.id;
         correctorUI.classList.remove('hidden');
         currentSentenceTitle.textContent = `正在校对: "${clip.sentence}"`;
-        
+
+        // --- 视频源加载逻辑 ---
         if (currentLoadedVideoFilename !== clip.original_video_filename) {
-            updateStatus(`正在加载视频: ${clip.original_video_filename}`, 'loading'); // 修改：移动到此位置
+            updateStatus(`正在加载视频: ${clip.original_video_filename}`, 'loading');
             console.log(`需要切换视频源: 从 '${currentLoadedVideoFilename}' 到 '${clip.original_video_filename}'`);
+
             let videoUrl;
             if (manualVideoFilesMap.size > 0) {
+                // 手动模式
                 const file = manualVideoFilesMap.get(clip.original_video_filename);
                 if (!file) {
                     updateStatus(`错误: 在手动上传的文件中找不到 ${clip.original_video_filename}`, 'error');
@@ -194,12 +257,49 @@ document.addEventListener('DOMContentLoaded', function () {
                 }
                 videoUrl = URL.createObjectURL(file);
             } else {
+                // 自动模式
                 videoUrl = clip.video_url;
             }
-            
-            await wavesurfer.load(videoUrl);
-            currentLoadedVideoFilename = clip.original_video_filename; 
-            updateStatus(`视频 ${clip.original_video_filename} 加载完成`, 'success');
+
+            // 1. 设置 video 标签源并等待元数据加载
+            // 注意：videoElement.src 必须保持为 MP4 以显示画面
+            videoElement.src = videoUrl;
+
+            try {
+                await new Promise((resolve, reject) => {
+                    if (videoElement.readyState >= 1) resolve();
+                    else {
+                        videoElement.addEventListener('loadedmetadata', () => resolve(), { once: true });
+                        videoElement.addEventListener('error', () => reject(new Error('视频加载失败')), { once: true });
+                    }
+                });
+                const videoDuration = videoElement.duration;
+                console.log(`[Sync] 视频元数据已加载，时长: ${videoDuration}s。`);
+
+                // 2. 加载波形数据 (解耦视觉与波形)
+                let peaks = undefined;
+                if (clip.waveform_url) {
+                    try {
+                        updateStatus(`正在提取波形 peaks...`, 'loading');
+                        peaks = await getPeaksFromUrl(clip.waveform_url);
+                        console.log(`[Sync] 已成功从代理文件提取 Peaks，将用于精确渲染。`);
+                    } catch (e) {
+                        console.warn(`[Sync] 提取 Peaks 失败，将回退到默认渲染:`, e);
+                    }
+                }
+
+                // load(url, peaks, duration) 
+                // 这里的 url 依然传入 videoUrl，确保 WaveSurfer 绑定的是 video 元素
+                // 但传入 peaks 后，WaveSurfer 会跳过对 videoUrl 的音频解码，直接用我们的 WAV 数据画图
+                await wavesurfer.load(videoUrl, peaks, videoDuration);
+
+                currentLoadedVideoFilename = clip.original_video_filename;
+                updateStatus(`视频 ${clip.original_video_filename} 加载完成`, 'success');
+            } catch (error) {
+                console.error("加载视频或波形出错:", error);
+                updateStatus(`加载失败: ${error.message}`, 'error');
+                return;
+            }
         } else {
             updateStatus(`已切换到句子: "${clip.sentence}"`, 'info');
         }
@@ -218,21 +318,20 @@ document.addEventListener('DOMContentLoaded', function () {
         });
 
         updateTimestampInputs();
-        
+
         activeRegion.on('update-end', () => {
-             const roundedStart = parseFloat(activeRegion.start.toFixed(3));
-             const roundedEnd = parseFloat(activeRegion.end.toFixed(3));
-             activeRegion.start = roundedStart;
-             activeRegion.end = roundedEnd;
-             clip.proofed_start = roundedStart;
-             clip.proofed_end = roundedEnd;
-             updateTimestampInputs();
+            const roundedStart = parseFloat(activeRegion.start.toFixed(3));
+            const roundedEnd = parseFloat(activeRegion.end.toFixed(3));
+            activeRegion.start = roundedStart;
+            activeRegion.end = roundedEnd;
+            clip.proofed_start = roundedStart;
+            clip.proofed_end = roundedEnd;
+            updateTimestampInputs();
         });
-        
-        const seekPosition = activeRegion.start / wavesurfer.getDuration();
-        wavesurfer.seekTo(seekPosition);
+
+        wavesurfer.setTime(activeRegion.start);
     }
-    
+
     // --- 核心操作逻辑 ---
     async function handleConfirmClip() {
         if (!currentClipId || !activeRegion) return;
@@ -278,7 +377,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 proofed_start: clip.proofed_start,
                 proofed_end: clip.proofed_end,
             };
-            
+
             clip.status = 'confirmed';
             updateClipStatusIndicator(clip);
             updateActionButtons();
@@ -303,7 +402,7 @@ document.addEventListener('DOMContentLoaded', function () {
         updateClipStatusIndicator(clip);
         updateActionButtons();
     }
-    
+
     // --- 新增: 导航功能 ---
     function handlePrevSentence() {
         if (!currentClipId || !analysisData) return;
@@ -317,7 +416,7 @@ document.addEventListener('DOMContentLoaded', function () {
             }
         }
     }
-    
+
     function handleNextSentence() {
         if (!currentClipId || !analysisData) return;
         const currentIndex = analysisData.clips.findIndex(c => c.id === currentClipId);
@@ -344,7 +443,7 @@ document.addEventListener('DOMContentLoaded', function () {
             updateStatus('没有已确认的音频可供上传。', 'error');
             return;
         }
-        
+
         // 检查是否有片段缺少 note_id
         const missingNoteIdCount = clipsToUpload.filter(c => !c.note_id).length;
         if (missingNoteIdCount > 0) {
@@ -398,14 +497,14 @@ document.addEventListener('DOMContentLoaded', function () {
         try {
             const zip = new JSZip();
             const mapping = [];
-            
+
             for (const clipId in confirmedClipsData) {
                 const clipData = confirmedClipsData[clipId];
                 const baseName = clipData.original_video_filename.replace(/\.[^/.]+$/, "");
                 const sanitize = (str) => str.replace(/[\\?/*:"<>|]/g, "").replace(/\s+/g, '_');
                 const sentencePart = sanitize(clipData.sentence.substring(0, 20));
                 const desiredFilename = `${baseName}_${sentencePart}.wav`;
-                
+
                 zip.file(desiredFilename, clipData.audio_blob);
                 mapping.push({ filename: desiredFilename, sentence: clipData.sentence });
             }
@@ -468,7 +567,7 @@ document.addEventListener('DOMContentLoaded', function () {
     function updateClipStatusIndicator(clip, tempStatus = null) {
         const indicator = document.getElementById(`status-${clip.id}`);
         if (!indicator) return;
-        
+
         const status = tempStatus || clip.status;
 
         switch (status) {
@@ -513,7 +612,7 @@ document.addEventListener('DOMContentLoaded', function () {
         else if (type === 'loading') statusDisplay.style.backgroundColor = '#bee3f8';
         else statusDisplay.style.backgroundColor = '#f7fafc';
     }
-    
+
     function blobToBase64(blob) {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
