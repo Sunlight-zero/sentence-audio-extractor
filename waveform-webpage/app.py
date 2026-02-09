@@ -192,7 +192,7 @@ def clip_audio():
 
     try:
         base_name = os.path.splitext(original_video_filename)[0]
-        output_filename = f"{base_name}_{sentence_id}.wav"
+        output_filename = f"{base_name}_{sentence_id}.mp3"
         output_path = os.path.join(app.config['OUTPUT_FOLDER'], output_filename)
 
         success = sm.finalize_clip(

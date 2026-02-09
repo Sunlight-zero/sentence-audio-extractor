@@ -207,7 +207,7 @@ def upload_clips_to_anki(
             # 2. 计算 SHA256 哈希值
             sha256_hash = hashlib.sha256(audio_bytes).hexdigest()
             # 3. 创建新的文件名
-            expected_audio_filename = f"{sha256_hash}.wav"
+            expected_audio_filename = f"{sha256_hash}.mp3"
 
             store_result = invoke(
                 'storeMediaFile', 
