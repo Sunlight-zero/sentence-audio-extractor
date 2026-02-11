@@ -18,7 +18,8 @@ body {
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
-h1, h2 {
+h1,
+h2 {
     text-align: center;
     color: #1a202c;
     margin-bottom: 2rem;
@@ -56,7 +57,8 @@ p {
     box-sizing: border-box;
 }
 
-.button, button {
+.button,
+button {
     display: inline-block;
     width: 100%;
     padding: 0.75rem;
@@ -97,13 +99,18 @@ button:disabled {
 }
 
 #videoPlayer {
+    width: 100%;
+    aspect-ratio: 16 / 9;
     background-color: #000;
     margin-bottom: 1rem;
     border-radius: 4px;
+    display: block;
+    object-fit: contain;
 }
 
 #waveform {
     width: 100%;
+    min-height: 128px;
     border: 1px solid #ddd;
     border-radius: 4px;
     background-color: #fdfdfd;
@@ -111,10 +118,11 @@ button:disabled {
 
 #timeline {
     width: 100%;
+    min-height: 20px;
     margin-top: 1rem;
 }
 
-#corrector-ui > p {
+#corrector-ui>p {
     font-weight: bold;
     text-align: center;
 }
@@ -151,12 +159,14 @@ button:disabled {
     font-weight: 600;
     transition: background-color 0.2s;
     margin-right: 10px;
-    width: auto; /* 修正按钮宽度 */
+    width: auto;
+    /* 修正按钮宽度 */
 }
 
 #play-selection-btn {
     background-color: #48bb78;
 }
+
 #play-selection-btn:hover {
     background-color: #38a169;
 }
@@ -164,6 +174,7 @@ button:disabled {
 #save-btn {
     background-color: #f6ad55;
 }
+
 #save-btn:hover {
     background-color: #ed8936;
 }

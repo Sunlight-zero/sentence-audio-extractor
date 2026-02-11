@@ -92,6 +92,15 @@ document.addEventListener('DOMContentLoaded', function () {
                 clip.proofed_end = clip.predicted_end;
             });
 
+            // 按视频文件名排序，同视频内按起始时间排序，避免频繁切换视频
+            // 理论上后端已经实现这一功能，这里是双重保险
+            analysisData.clips.sort((a, b) => {
+                if (a.original_video_filename !== b.original_video_filename) {
+                    return a.original_video_filename.localeCompare(b.original_video_filename);
+                }
+                return a.predicted_start - b.predicted_start;
+            });
+
             // 初始化 WaveSurfer (但不加载媒体，等待用户选择)
             await setupWaveSurfer();
 

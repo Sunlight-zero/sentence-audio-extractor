@@ -497,7 +497,12 @@ def run_processing_task(
         json_filename = f"results_{task_id[:8]}.json"
         json_path = os.path.join(app.config['RESULTS_FOLDER'], json_filename)
         
-        final_json_data = { "clips": sorted(all_clips_results, key=lambda x: x.get('score', 0), reverse=True) }
+        final_json_data = {
+            "clips": sorted(
+                all_clips_results, 
+                key=lambda x: (x.get('original_video_filename', ''), x.get('predicted_start', 0))
+            )
+        }
         with open(json_path, 'w', encoding='utf-8') as f:
             json.dump(final_json_data, f, ensure_ascii=False, indent=4)
 
