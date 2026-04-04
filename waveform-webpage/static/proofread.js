@@ -1,6 +1,6 @@
 import WaveSurfer from 'https://unpkg.com/wavesurfer.js@7/dist/wavesurfer.esm.js'
-import RegionsPlugin from 'https://unpkg.com/wavesurfer.js@7/dist/plugins/regions.esm.js'
-import TimelinePlugin from 'https://unpkg.com/wavesurfer.js@7/dist/plugins/timeline.esm.js'
+import RegionsPlugin from 'https://unpkg.com/wavesurfer.js@7/dist/plugins/regions.js'
+import TimelinePlugin from 'https://unpkg.com/wavesurfer.js@7/dist/plugins/timeline.js'
 
 document.addEventListener('DOMContentLoaded', function () {
     // --- 元素获取 ---

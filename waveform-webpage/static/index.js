@@ -23,13 +23,14 @@ document.addEventListener('DOMContentLoaded', () => {
     // --- 新增功能: 从 Anki 获取句子 ---
     if (getAnkiBtn) {
         getAnkiBtn.addEventListener('click', async () => {
-            const deckName = deckNameInput.value.trim() || 'luna temporary';
+            const deckName = deckNameInput.value.trim();
             statusContainer.style.display = 'block';
-            statusMessage.textContent = `正在从 Anki 牌组 '${deckName}' 获取句子...`;
+            statusMessage.textContent = deckName ? `正在从 Anki 牌组 '${deckName}' 获取句子...` : "正在根据配置文件从 Anki 获取句子...";
             getAnkiBtn.disabled = true;
 
             try {
-                const response = await fetch(`/api/anki/sentences?deck=${encodeURIComponent(deckName)}`);
+                const url = deckName ? `/api/anki/sentences?deck=${encodeURIComponent(deckName)}` : '/api/anki/sentences';
+                const response = await fetch(url);
                 const data = await response.json();
 
                 if (!response.ok || !data.success) {

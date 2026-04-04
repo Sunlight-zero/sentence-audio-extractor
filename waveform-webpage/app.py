@@ -124,13 +124,17 @@ def proofread_page():
 def get_anki_sentences():
     """从 AnkiConnect 获取需要处理的句子。"""
     try:
-        deck_name = request.args.get('deck', 'luna temporary') # 允许前端指定牌组
+        deck_name = request.args.get('deck') # 为 None 时将使用配置文件中的默认值
         sentences_path = os.path.join(app.config['SENTENCES_FOLDER'], 'anki_sentences')
         result = anki.extract_sentences_from_anki(path=sentences_path, deck_name=deck_name)
+        
+        # 如果 deck_name 是 None，从配置文件中获取实际使用的牌组名用于前端显示
+        actual_deck = deck_name or anki.load_anki_settings()["search_config"]["deck_name"]
+        
         return jsonify({
             "success": True,
             "sentences": result["sentences_text"],
-            "message": f"成功从牌组 '{deck_name}' 提取 {len(result['id_to_sentence_map'])} 个句子。"
+            "message": f"成功从牌组 '{actual_deck}' 提取 {len(result['id_to_sentence_map'])} 个句子。"
         })
     except Exception as e:
         traceback.print_exc()

@@ -13,6 +13,7 @@ from typing import Dict, List, Any, Optional
 import re
 # --- 【核心修正】导入 hashlib 模块用于计算哈希值 ---
 import hashlib
+import shutil
 
 # AnkiConnect API 的 URL
 ANKICONNECT_URL = "http://localhost:8765"
@@ -36,12 +37,19 @@ def invoke(action, **params):
 
 def extract_sentences_from_anki(
         path: str = "sentences",
-        deck_name: str = "luna temporary",
-        field_names: List[str] = ["example_sentence", "sentence1"]
+        deck_name: Optional[str] = None,
+        field_names: Optional[List[str]] = None
     ) -> Dict[str, Any]:
     """
     从指定的 Anki 牌组中提取没有音频的例句。
+    参数为空时强制读取 anki_settings.json 中的配置。
     """
+    settings = load_anki_settings()
+    search_config = settings["search_config"]
+    
+    deck_name = deck_name or search_config["deck_name"]
+    field_names = field_names or search_config["field_names"]
+
     print(f"正在查找 '{deck_name}' 牌组中所有笔记...")
     query = f'"deck:{deck_name}"'
     note_ids = invoke("findNotes", query=query)
@@ -83,90 +91,99 @@ def extract_sentences_from_anki(
     return {"sentences_text": sentences_text, "id_to_sentence_map": id_to_sentence_map}
 
 
-def change_note_type(note_id: int, target_type: str) -> None:
-    """修改笔记的模板类型（原地修改）"""
-
-    if target_type != "word-multi-stcs":
-        raise NotImplementedError(f"未知的目标笔记类型：{target_type}")
-
-    def get_note_info(note_ids: int) -> Dict[str, Any]:
-        """获取单个笔记信息"""
-        return_notes_list = invoke("notesInfo", notes=[note_ids])
-        assert len(return_notes_list) == 1, "获取的笔记数量不符！"
-        return invoke("notesInfo", notes=[note_ids])[0]
-
-    def extract_field(note: Dict[str, Any], field_name: str) -> str:
-        """提取笔记中的字段值"""
-        field = note["fields"].get(field_name)
-        return field["value"] if field else ""
-
-    def build_field_map() -> Dict[str, str]:
-        """构建从源模板到目标模板的字段映射"""
-        return {
-            "word": "word",
-            "rubytextHtml": "ruby",
-            "audio_for_word": "audio",
-            "etymology": "etymology",
-            "illustration": "illustration",
-            "example_sentence": "sentence1",
-            "audio_for_example_sentence": "audio_sentence1",
-            "screenshot": "screenshot1",
-            "remarks": "remark1",
-            "humanVoice": "allow_listen1",
-            "source": "source1",
-            "dictionaryInfo": "dictionaryInfo",
-            "dictionaryContent": "dictionaryContent",
-        }
-
-
-    def build_target_fields(note: Dict[str, Any]) -> Dict[str, str]:
-        """构建目标模板的字段内容"""
-        # 初始化所有目标字段为空
-        fields = {name: "" for name in [
-            "word", "ruby", "audio", "etymology", "illustration",
-            "sentence1", "audio_sentence1", "screenshot1", "remark1", "allow_listen1", "source1",
-            "sentence2", "audio_sentence2", "screenshot2", "remark2", "allow_listen2", "source2",
-            "sentence3", "audio_sentence3", "screenshot3", "remark3", "allow_listen3", "source3",
-            "sentence4", "audio_sentence4", "screenshot4", "remark4", "allow_listen4", "source4",
-            "sentence5", "audio_sentence5", "screenshot5", "remark5", "allow_listen5", "source5",
-            "sentence6", "audio_sentence6", "screenshot6", "remark6", "allow_listen6", "source6",
-            "dictionaryInfo", "dictionaryContent",
-        ]}
-
-        # 根据字段映射填充内容
-        field_map = build_field_map()
-        for source_field, target_field in field_map.items():
-            fields[target_field] = extract_field(note, source_field)
-
-        return fields
-
-    note = get_note_info(note_id)
-    fields = build_target_fields(note)
+def load_anki_settings() -> Dict[str, Any]:
+    """
+    加载全局 Anki 设置。如果文件不存在或格式错误，将抛出异常。
+    """
+    settings_path = os.path.join(os.path.dirname(__file__), "anki_settings.json")
     
-    # 准备字段映射，AnkiConnect 的 updateNoteModel 需要这个格式
-    field_map = {}
-    for source_field, target_field in build_field_map().items():
-        if source_field in note["fields"]:
-            field_map[source_field] = target_field
+    if not os.path.exists(settings_path):
+        example_path = settings_path.replace(".json", ".example.json")
+        if os.path.exists(example_path):
+             print(f"[提示] 未找到配置文件，已自动根据模板创建: {os.path.basename(settings_path)}")
+             shutil.copy(example_path, settings_path)
+        else:
+             raise FileNotFoundError(f"找不到 Anki 配置文件且未发现模板: {settings_path}\n请确保 utils 目录下存在 anki_settings.json。")
+    
+    with open(settings_path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
-    # 使用 updateNoteModel 原地修改笔记类型
-    invoke(
-        "updateNoteModel",
-        note={
-            "id": note_id,
-            "modelName": target_type,
-            "fields": fields,
-        }
-    )
+def change_note_type(note_id: int, target_type: str) -> None:
+    """
+    根据 JSON 配置修改笔记的模板类型。
+    规则存储在 utils/anki_note_mappings/{target_type}.json
+    """
+    # 1. 寻找转换规则文件
+    mapping_dir = os.path.join(os.path.dirname(__file__), "anki_note_mappings")
+    mapping_file = os.path.join(mapping_dir, f"{target_type}.json")
+    
+    if not os.path.exists(mapping_file):
+        print(f"  - [警告] 未找到模板 '{target_type}' 的配置文件: {mapping_file}，已跳过")
+        return
+
+    with open(mapping_file, "r", encoding="utf-8") as f:
+        config = json.load(f)
+    
+    config_note_type = config.get("note_type")
+    if config_note_type != target_type:
+        print(f"  - [警告] 配置文件 '{mapping_file}' 中的 note_type 与目标类型不匹配，已跳过")
+        return
+    
+    target_fields_list = config.get("target_fields", [])
+    field_mapping = config.get("field_mapping", {})
+
+    # 2. 获取旧笔记信息
+    note_info_list = invoke("notesInfo", notes=[note_id])
+    if not note_info_list:
+        print(f"  - [错误] 找不到笔记 ID: {note_id}")
+        return
+    old_note = note_info_list[0]
+
+    # 3. 构建新字段字典
+    # 初始化所有目标字段为空字符串
+    new_fields = {field: "" for field in target_fields_list}
+    
+    # 根据映射从旧笔记中提取值
+    old_fields_data = old_note.get("fields", {})
+    for old_name, target_name in field_mapping.items():
+        if old_name in old_fields_data:
+            new_fields[target_name] = old_fields_data[old_name]["value"]
+
+    # 4. 执行 API 调用
+    try:
+        invoke(
+            "updateNoteModel",
+            note={
+                "id": note_id,
+                "modelName": target_type,
+                "fields": new_fields,
+            }
+        )
+        print(f"  - [成功] 笔记 {note_id} 类型已转换为 {target_type}")
+    except Exception as e:
+        print(f"  - [失败] 转换笔记 {note_id} 类型时出错: {e}")
 
 def upload_clips_to_anki(
         clips_data: List[Dict[str, Any]], 
-        final_deck: str = "Japanese::temporary",
+        final_deck: Optional[str] = None,
         target_note_type: Optional[str] = None
     ):
     """
     将确认后的音频片段上传到 Anki 并移动卡片。
+    参数为空时强制读取 anki_settings.json 中的配置。
     """
+    settings = load_anki_settings()
+    upload_config = settings["upload_config"]
+    conversion_config = settings.get("note_type_conversion", {})
+
+    final_deck = final_deck or upload_config["final_deck"]
+    source_note_type = upload_config["source_note_type"]
+    audio_field_name = upload_config["audio_field_name"]
+    
+    # 如果函数参数没传 target_note_type，则检查配置中是否启用了自动转换
+    if target_note_type is None and conversion_config.get("enabled"):
+        target_note_type = conversion_config.get("target_note_type")
+
     if not clips_data:
         raise ValueError("没有提供可上传的音频片段数据。")
 
@@ -194,6 +211,13 @@ def upload_clips_to_anki(
 
         print(f"\n正在处理笔记 ID: {note_id} (句子: {sentence[:20]}...)")
         
+        note_info = invoke("notesInfo", notes=[note_id])[0]
+        # 使用配置文件中的源笔记类型进行校验
+        if note_info.get("modelName") != source_note_type:
+            print(f"  - [跳过] 笔记类型 '{note_info.get('modelName')}' 不是 '{source_note_type}'。")
+            skipped_count += 1
+            continue
+
         try:
             if ',' in audio_base64:
                 pure_base64_data = audio_base64.split(',', 1)[1]
@@ -221,7 +245,7 @@ def upload_clips_to_anki(
                 "note": {
                     "id": note_id,
                     "fields": {
-                        "audio_for_example_sentence": f"[sound:{audio_filename}]"
+                        audio_field_name: f"[sound:{audio_filename}]"
                     }
                 }
             }
@@ -239,7 +263,6 @@ def upload_clips_to_anki(
             
             if target_note_type is not None:
                 change_note_type(note_id, target_note_type)
-                print(f"  - [成功] 笔记 {note_id} 的类型已更新为 {target_note_type}。")
 
         except Exception as e:
             print(f"  - [错误] 处理笔记 {note_id} 时发生错误: {e}")

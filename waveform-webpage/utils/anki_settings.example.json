@@ -1,0 +1,18 @@
+{
+    "search_config": {
+        "deck_name": "lunadeck",
+        "field_names": [
+            "example_sentence",
+            "sentence1"
+        ]
+    },
+    "upload_config": {
+        "final_deck": "Japanese::temporary",
+        "source_note_type": "modelofluna",
+        "audio_field_name": "audio_for_example_sentence"
+    },
+    "note_type_conversion": {
+        "enabled": false,
+        "target_note_type": "test"
+    }
+}
