@@ -26,8 +26,8 @@ except ImportError:
     from llm_handler import llm_normalize
 
 
-SUPPRESS_TOKEN_FILE = r"D:\program\Python\auto-workflows\stt-backup\stt-test\prevent-kanji-stt\kanji_tokens.txt"
-PROMPT = "いかの たいわは ぜんぶ ひらがなか カタカナで アウトプットして ください。かんじは ぜったい ダメです。では、はじめましょう。"
+SUPPRESS_TOKEN_FILE = os.path.join(os.path.dirname(__file__), "suppress_tokens.txt")
+PROMPT = "こどもの ことば みたいに かんじを しゅつりょくせず、この ように ひらがなと カタカナのみで アウトプットしてください。では、はじめましょう。"
 
 # --- 【核心修正】将文件名清理函数移入此文件 ---
 def _sanitize_filename_part(text: str, max_length: int = 50) -> str:
@@ -144,9 +144,16 @@ def get_waveform_data(audio_path: str, output_dir: str) -> Optional[str]:
         print(f"生成波形数据失败: {e}")
         return None
 
-def load_suppress_tokens(file_path):
-    with open(file_path, 'r', encoding='utf-8') as f:
-        return [int(token) for token in f.read().split()]
+def load_suppress_tokens(file_path) -> Optional[List[int]]:
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return [int(token) for token in f.read().split()]
+    except FileNotFoundError:
+        print("未找到 suppress_tokens.txt 文件，将不使用 token 屏蔽功能")
+        return None
+    except Exception as e:
+        print(f"加载 suppress_tokens.txt 遇到错误：{e}，将不使用 token 屏蔽功能")
+        return None
 
 def _transcribe_audio_worker(
         queue: multiprocessing.Queue, 
@@ -163,7 +170,8 @@ def _transcribe_audio_worker(
         kwargs = dict()
         if suppress_file_path:
             suppress_tokens = load_suppress_tokens(suppress_file_path)
-            kwargs["suppress_tokens"] = suppress_tokens
+            if suppress_tokens is not None:
+                kwargs["suppress_tokens"] = suppress_tokens
         
         model = WhisperModel(model_path, device=device, compute_type=compute_type)
         print(f"子进程: 开始转写音频 '{os.path.basename(audio_path)}'...")
