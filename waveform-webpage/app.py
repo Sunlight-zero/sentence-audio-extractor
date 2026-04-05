@@ -466,7 +466,7 @@ def run_processing_task(
                         print(f"警告: {original_filename} 音源分离失败，继续使用原音频。")
                         
                 tasks[task_id]["message"] = f"[转写 {i+1}/{len(video_paths)}] {original_filename}: 正在识别..."
-                transcription_result = sm.transcribe_and_normalize_audio(
+                transcription_result = sm.transcribe_audio(
                     audio_path=audio_for_transcription,
                     model_path=r"D:\ACGN\gal\whisper\models\faster-whisper-medium",
                     device="cuda", compute_type="float16",

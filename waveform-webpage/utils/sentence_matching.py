@@ -6,12 +6,12 @@ import time
 import subprocess
 import sys
 import shutil
-from typing import List, Dict, Optional, Any, Tuple
+from typing import List, Dict, Optional, Any, Tuple, Union, overload
 
 # --- 核心依赖 ---
 import multiprocessing
 from faster_whisper import WhisperModel
-from faster_whisper.transcribe import Word
+from faster_whisper.transcribe import Word as WhisperWord
 from thefuzz import fuzz
 import pykakasi
 import mojimoji
@@ -26,7 +26,7 @@ except ImportError:
     from llm_handler import llm_normalize
 
 
-SUPPRESS_TOKEN_FILE = os.path.join(os.path.dirname(__file__), "suppress_tokens.txt")
+SUPPRESS_TOKEN_FILE = os.path.join(os.path.dirname(__file__), "configs/suppress_tokens.txt")
 PROMPT = "こどもの ことば みたいに かんじを しゅつりょくせず、この ように ひらがなと カタカナのみで アウトプットしてください。では、はじめましょう。"
 
 # --- 【核心修正】将文件名清理函数移入此文件 ---
@@ -45,7 +45,7 @@ def _sanitize_filename_part(text: str, max_length: int = 50) -> str:
     return sanitized_text[:max_length]
 
 # ==============================================================================
-# 1. 文本标准化模块 (有修改)
+# 1. 文本标准化模块
 # ==============================================================================
 def normalize_japanese_text(text: str) -> str:
     """标准化日文文本为纯平假名。"""
@@ -82,7 +82,7 @@ def batch_normalize_texts(texts: List[str]) -> Dict[str, str]:
 
 
 # ==============================================================================
-# 2. 音源分离与语音识别模块 (有修改)
+# 2. 音源分离与语音识别模块
 # ==============================================================================
 def _separate_vocals_worker(queue: multiprocessing.Queue, audio_path: str, output_dir: str, models_path: Optional[str]):
     """【子进程】执行Demucs音源分离。"""
@@ -155,6 +155,48 @@ def load_suppress_tokens(file_path) -> Optional[List[int]]:
         print(f"加载 suppress_tokens.txt 遇到错误：{e}，将不使用 token 屏蔽功能")
         return None
 
+class AsrWord:
+    start: float
+    end: float
+    text: str
+
+    @overload
+    def __init__(self, 
+                 start: Union[int, float], 
+                 end: Union[int, float],
+                 word: str): ...
+
+    @overload
+    def __init__(self, whisper_word: WhisperWord): ...
+
+    def __init__(self, *args):
+        """
+        Initialize the AsrWord.
+        """
+        try:
+            if len(args) == 3:
+                start, end, text = args
+                if isinstance(start, float) and isinstance(end, float):
+                    self.start, self.end = start, end
+                else:
+                    self.start = float(start)
+                    self.end = float(end)
+                self.text = text
+            if len(args) == 1:
+                obj = args[0]
+                if isinstance(obj, WhisperWord):
+                    self.start = obj.start
+                    self.end = obj.end
+                    self.text = obj.word
+
+        except Exception as e:
+            print(f"AsrWord 初始化失败: {e}")
+    
+    @property
+    def word(self):
+        return self.text
+
+
 def _transcribe_audio_worker(
         queue: multiprocessing.Queue, 
         audio_path: str, model_path: str, 
@@ -185,13 +227,13 @@ def _transcribe_audio_worker(
             # vad_parameters=dict(min_silence_duration_ms=500),
             **kwargs
         )
-        all_words: List[Word] = []
+        all_words: List[AsrWord] = []
         print("子进程: 实时转写进度...")
         for segment in segments:
             start_time_str = time.strftime('%M:%S', time.gmtime(segment.start))
             print(f"  [{start_time_str}] {segment.text.strip()}")
             if segment.words:
-                all_words.extend(segment.words)
+                all_words.extend(map(AsrWord, segment.words))
         
         if not all_words:
             raise Exception("错误：未识别出任何词语")
@@ -216,14 +258,14 @@ def _transcribe_audio_worker(
         print(f"子进程 Whisper 错误: {e}")
         queue.put(None)
 
-def transcribe_and_normalize_audio(
+def transcribe_audio(
     audio_path: str, 
     model_path: str, 
     device: str, 
     compute_type: str,
     # --- 【核心修改】新增参数，并设默认值为 True 以保持向后兼容 ---
     perform_normalization: bool = True
-) -> Optional[Tuple[List[Word], Optional[List[str]]]]:
+) -> Optional[Tuple[List[AsrWord], Optional[List[str]]]]:
     """
     【修改】主进程接口，启动子进程进行语音识别和可选的标准化。
     返回原始词对象和（可选的）标准化后的词文本列表。
@@ -242,7 +284,7 @@ def transcribe_and_normalize_audio(
     print("主进程: 语音识别完成。")
     return result
 
-def normalize_words(all_words: list[Word], method: str = "llm") -> list[str]:
+def normalize_words(all_words: list[AsrWord], method: str = "llm") -> list[str]:
     """
     句子标准化函数接口。
     如果指定使用 "llm" 方法，将通过网络调用 LLM 并获取输出
@@ -266,7 +308,7 @@ def normalize_words(all_words: list[Word], method: str = "llm") -> list[str]:
 def find_best_match_in_words(
     norm_words: List[str],
     norm_target: str,
-    all_words: List[Word],
+    all_words: List[AsrWord],
     search_mode: str,
     confidence_threshold: int
 ) -> Optional[Dict[str, Any]]:
@@ -309,7 +351,7 @@ def find_best_match_in_words(
     return {
         "start_timestamp": all_words[best_start_idx].start - 0.3,
         "end_timestamp": all_words[best_end_idx].end,
-        "matched_text": "".join([w.word for w in all_words[best_start_idx:best_end_idx+1]]),
+        "matched_text": "".join([w.text for w in all_words[best_start_idx:best_end_idx+1]]),
         "score": best_score
     }
 
@@ -391,7 +433,7 @@ def finalize_clip(
 # 5. 主流程编排模块 (有修改)
 # ==============================================================================
 def find_best_match_for_all_sentences(
-    all_words: List[Word],
+    all_words: List[AsrWord],
     norm_words: List[str],
     target_sentences_map: Dict[str, str],
     confidence_threshold: int,
@@ -461,8 +503,8 @@ def find_multiple_sentences_timestamps(
         else:
             update_progress("警告: 音源分离失败，使用原始音频。")
 
-    update_progress("步骤 2/4: 正在进行语音识别与转写稿标准化...")
-    transcription_result = transcribe_and_normalize_audio(audio_for_transcription, model_path_or_size, device, compute_type)
+    update_progress("步骤 2/4: 正在进行语音识别...")
+    transcription_result = transcribe_audio(audio_for_transcription, model_path_or_size, device, compute_type)
     if not transcription_result:
         update_progress("错误: 语音识别步骤失败。任务终止。")
         return {"all_words": None, "norm_words": None, "clip_source_path": None}

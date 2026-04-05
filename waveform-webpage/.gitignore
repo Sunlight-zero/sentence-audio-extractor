@@ -1,3 +1,4 @@
 tmp/**
 utils/llm_api_key.json
 utils/anki_settings.json
+utils/**/suppress_tokens.txt
